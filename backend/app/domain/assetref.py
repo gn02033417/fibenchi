@@ -35,17 +35,33 @@ class AssetRef(str):
     """
 
     id: int | None
+    _exchange: str | None
+    _stored_currency: str | None
 
-    def __new__(cls, ticker: str, id: int | None = None) -> AssetRef:
+    def __new__(
+        cls,
+        ticker: str,
+        id: int | None = None,
+        *,
+        exchange: str | None = None,
+        currency: str | None = None,
+    ) -> AssetRef:
         self = super().__new__(cls, ticker)
         self.id = id
+        self._exchange = exchange.upper().strip() if exchange else None
+        self._stored_currency = currency
         return self
 
     @classmethod
     def of(cls, asset) -> AssetRef:
         """Build from anything with ``symbol`` and ``id`` attributes (an ORM
         ``Asset`` — while it's live — or another ref)."""
-        return cls(asset.symbol, asset.id)
+        return cls(
+            asset.symbol,
+            asset.id,
+            exchange=getattr(asset, "exchange", None),
+            currency=getattr(asset, "currency", None),
+        )
 
     @property
     def symbol(self) -> str:
@@ -54,6 +70,11 @@ class AssetRef(str):
         ``symbol``/``id`` pair, which is what ``of`` duck-types on."""
         return str(self)
 
+    @property
+    def exchange(self) -> str | None:
+        """Verified stored venue metadata, when this ref came from an asset."""
+        return self._exchange
+
     def __repr__(self) -> str:
         if self.id is None:
             return f"AssetRef({str.__repr__(self)})"
@@ -61,7 +82,11 @@ class AssetRef(str):
 
     @cached_property
     def _instrument(self) -> Instrument:
-        return classify(self)
+        return classify(
+            self,
+            exchange=self._exchange,
+            currency=self._stored_currency,
+        )
 
     @property
     def kind(self) -> AssetKind:

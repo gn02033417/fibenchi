@@ -1,0 +1,94 @@
+{
+  "full": {
+    "contracts": [
+      {
+        "security_type": "STK",
+        "region": "TW",
+        "exchange": "TSE",
+        "code": "2330",
+        "target_code": null
+      },
+      {
+        "security_type": "STK",
+        "region": "TW",
+        "exchange": "OTC",
+        "code": "6488",
+        "target_code": null
+      },
+      {
+        "security_type": "STK",
+        "region": "TW",
+        "exchange": "TSE",
+        "code": "0050",
+        "target_code": null
+      },
+      {
+        "security_type": "STK",
+        "region": "TW",
+        "exchange": "OES",
+        "code": "7788",
+        "target_code": null
+      },
+      {
+        "security_type": "FUT",
+        "region": "TW",
+        "exchange": "TAIFEX",
+        "code": "TXFR1",
+        "target_code": "TXFG6"
+      },
+      {
+        "security_type": "WRT",
+        "region": "TW",
+        "exchange": "TSE",
+        "code": "03007T",
+        "target_code": null
+      }
+    ],
+    "security_type": "STK",
+    "region": "TW",
+    "total": 6
+  },
+  "pages": [
+    {
+      "contracts": [
+        {
+          "security_type": "STK",
+          "region": "TW",
+          "exchange": "TSE",
+          "code": "2330",
+          "target_code": null
+        },
+        {
+          "security_type": "STK",
+          "region": "TW",
+          "exchange": "OTC",
+          "code": "6488",
+          "target_code": null
+        }
+      ],
+      "security_type": "STK",
+      "region": "TW",
+      "page": 1,
+      "page_size": 2,
+      "max_page": 2,
+      "total": 3
+    },
+    {
+      "contracts": [
+        {
+          "security_type": "STK",
+          "region": "TW",
+          "exchange": "TSE",
+          "code": "0050",
+          "target_code": null
+        }
+      ],
+      "security_type": "STK",
+      "region": "TW",
+      "page": 2,
+      "page_size": 2,
+      "max_page": 2,
+      "total": 3
+    }
+  ]
+}

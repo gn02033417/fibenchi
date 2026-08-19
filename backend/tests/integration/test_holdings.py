@@ -6,9 +6,17 @@ import pytest
 
 from app.services.compute.indicators import bb_position
 from app.services.yahoo import yahoo_client
-from tests.helpers import make_price_df
+from tests.helpers import make_price_df, seed_taiwan_directory
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
+
+
+@pytest.fixture(autouse=True)
+async def seed_directory(db):
+    await seed_taiwan_directory(db, [
+        {"symbol": "0051", "name": "元大台灣中型100", "type": "etf"},
+        {"symbol": "2331", "name": "測試股票一"},
+    ])
 
 
 # ── Pure unit tests for bb_position ───────────────────────────────────
@@ -44,7 +52,7 @@ _MOCK_HOLDINGS = {
 async def test_holdings_indicators_success(client):
     """Holdings indicators endpoint returns data for ETF with mocked Yahoo."""
     # Create an ETF asset
-    await client.post("/api/assets", json={"symbol": "SPY", "name": "SPDR S&P 500", "type": "etf"})
+    await client.post("/api/assets", json={"symbol": "0051", "name": "元大台灣中型100", "type": "etf"})
 
     histories = {
         "AAPL": make_price_df(100, 180.0),
@@ -59,7 +67,7 @@ async def test_holdings_indicators_success(client):
         patch.object(yahoo_client, "holdings", AsyncMock(return_value=_MOCK_HOLDINGS)),
         patch("app.services.compute.indicators.get_price_provider", return_value=mock_prov),
     ):
-        resp = await client.get("/api/assets/SPY/holdings/indicators")
+        resp = await client.get("/api/assets/0051/holdings/indicators")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -88,17 +96,17 @@ async def test_holdings_indicators_success(client):
 
 async def test_holdings_indicators_not_etf(client):
     """Holdings indicators endpoint returns 400 for stock assets."""
-    await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple", "type": "stock"})
+    await client.post("/api/assets", json={"symbol": "2331", "name": "測試股票一", "type": "stock"})
 
-    resp = await client.get("/api/assets/AAPL/holdings/indicators")
+    resp = await client.get("/api/assets/2331/holdings/indicators")
     assert resp.status_code == 400
 
 
 async def test_holdings_indicators_no_data(client):
     """Holdings indicators endpoint returns 404 when no holdings found."""
-    await client.post("/api/assets", json={"symbol": "SPY", "name": "SPDR S&P 500", "type": "etf"})
+    await client.post("/api/assets", json={"symbol": "0051", "name": "元大台灣中型100", "type": "etf"})
 
     with patch.object(yahoo_client, "holdings", AsyncMock(return_value=None)):
-        resp = await client.get("/api/assets/SPY/holdings/indicators")
+        resp = await client.get("/api/assets/0051/holdings/indicators")
 
     assert resp.status_code == 404

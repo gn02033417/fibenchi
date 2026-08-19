@@ -22,6 +22,7 @@ class Asset(Base):
     symbol: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     type: Mapped[AssetType] = mapped_column(Enum(AssetType))
+    exchange: Mapped[str | None] = mapped_column(String(20), nullable=True)
     currency: Mapped[str] = mapped_column(String(10), default="EUR", server_default="EUR")
     # How the price number reads. ``currency`` answers *which* currency and so
     # can't express "percent" or "no unit at all" — an index had to claim a

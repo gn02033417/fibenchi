@@ -6,9 +6,9 @@ from dataclasses import dataclass
 class SymbolEntry:
     """A single symbol fetched from an exchange data source."""
 
-    symbol: str  # Yahoo-compatible symbol (e.g. "AALB.AS")
+    symbol: str  # Raw provider symbol; Taiwan entries keep leading zeroes.
     name: str
-    exchange: str  # Display name (e.g. "Euronext Amsterdam")
+    exchange: str  # Canonical exchange code or provider display name.
     currency: str
     type: str = "stock"  # "stock" or "etf"
 

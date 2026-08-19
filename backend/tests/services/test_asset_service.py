@@ -1,17 +1,17 @@
-"""Unit tests for asset_service — tests service logic with mocked repos."""
+"""Unit tests for asset_service — local Taiwan directory contract."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.domain import UnitKind
 from app.domain.provenance import FieldSource
 from app.models import AssetType
+from app.models.symbol_directory import SymbolDirectory
 from app.services.asset_service import create_asset, delete_asset, list_assets, update_asset
 from tests.helpers import make_model_asset as _make_asset
 
-# Patch ensure_currency globally for all tests in this module since
-# asset_service.create_asset() now calls it and the mock DB can't support it
 _ensure_patch = "app.services.asset_service.ensure_currency"
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
@@ -24,6 +24,23 @@ def _make_default_group(assets=None):
     group.is_default = True
     group.assets = list(assets or [])
     return group
+
+
+def _directory(
+    symbol="2330",
+    name="台積電",
+    exchange="TSE",
+    asset_type="stock",
+    active=True,
+):
+    return SymbolDirectory(
+        symbol=symbol,
+        name=name,
+        exchange=exchange,
+        type=asset_type,
+        currency="TWD",
+        active=active,
+    )
 
 
 @patch("app.services.asset_service.AssetRepository")
@@ -40,219 +57,133 @@ async def test_list_assets_delegates_to_repo(MockRepo):
     assert result == expected
 
 
+@patch("app.services.yahoo.yahoo_client.validate", new_callable=AsyncMock)
+@patch("app.services.shioaji.client.ShioajiClient.list_contracts", new_callable=AsyncMock)
 @patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
 @patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_uppercase_symbol(MockAssetRepo, mock_validate, _mock_ensure):
+async def test_create_asset_copies_directory_metadata_without_external_validation(
+    MockAssetRepo,
+    mock_ensure,
+    list_contracts,
+    yahoo_validate,
+):
+    db = AsyncMock()
+    mock_repo = MockAssetRepo.return_value
+    mock_repo.find_directory_by_symbol = AsyncMock(return_value=_directory())
+    mock_repo.find_by_symbol = AsyncMock(return_value=None)
+    mock_repo.create = AsyncMock(return_value=_make_asset(symbol="2330", name="台積電"))
+
+    await create_asset(db, symbol="2330", name="caller supplied name", asset_type=AssetType.ETF)
+
+    kwargs = mock_repo.create.call_args.kwargs
+    assert kwargs["symbol"] == "2330"
+    assert kwargs["name"] == "台積電"
+    assert kwargs["exchange"] == "TSE"
+    assert kwargs["type"] is AssetType.STOCK
+    assert kwargs["type_source"] is FieldSource.AUTO
+    assert kwargs["currency"] == "TWD"
+    assert kwargs["unit_kind"] is UnitKind.CURRENCY
+    mock_ensure.assert_awaited_once_with(db, "TWD")
+    yahoo_validate.assert_not_awaited()
+    list_contracts.assert_not_awaited()
+
+
+@patch(_ensure_patch, new_callable=AsyncMock)
+@patch("app.services.asset_service.AssetRepository")
+async def test_create_asset_copies_etf_and_otc_directory_metadata(MockAssetRepo, mock_ensure):
     db = AsyncMock()
     mock_repo = MockAssetRepo.return_value
     mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    new_asset = _make_asset()
-    mock_repo.create = AsyncMock(return_value=new_asset)
+    mock_repo.create = AsyncMock(side_effect=[
+        _make_asset(symbol="0050", name="元大台灣50", type=AssetType.ETF),
+        _make_asset(symbol="6488", name="環球晶", type=AssetType.STOCK),
+    ])
+    mock_repo.find_directory_by_symbol = AsyncMock(side_effect=[
+        _directory("0050", "元大台灣50", "TSE", "etf"),
+        _directory("6488", "環球晶", "OTC", "stock"),
+    ])
 
-    await create_asset(db, symbol="aapl", name="Apple", asset_type=AssetType.STOCK)
+    await create_asset(db, "0050", None)
+    await create_asset(db, "6488", None)
 
-    mock_repo.create.assert_awaited_once()
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["symbol"] == "AAPL"
+    first, second = mock_repo.create.await_args_list
+    assert first.kwargs["type"] is AssetType.ETF
+    assert first.kwargs["exchange"] == "TSE"
+    assert second.kwargs["type"] is AssetType.STOCK
+    assert second.kwargs["exchange"] == "OTC"
+    assert first.kwargs["currency"] == second.kwargs["currency"] == "TWD"
+    assert mock_ensure.await_count == 2
+
+
+@patch("app.services.asset_service.AssetRepository")
+async def test_create_asset_rejects_non_taiwan_symbol(MockAssetRepo):
+    db = AsyncMock()
+    mock_repo = MockAssetRepo.return_value
+    mock_repo.find_directory_by_symbol = AsyncMock(return_value=None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await create_asset(db, symbol="AAPL", name=None)
+
+    assert exc_info.value.status_code == 404
+    assert "Taiwan symbol directory" in exc_info.value.detail
+    mock_repo.create.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "directory, expected_text",
+    [
+        (_directory("9000", "停牌商品", "TSE", "stock", active=False), "inactive"),
+        (_directory("7777", "未知商品", "TSE", "unknown"), "supported"),
+        (_directory("US01", "海外商品", "NASDAQ", "stock"), "supported"),
+    ],
+)
+@patch("app.services.asset_service.AssetRepository")
+async def test_create_asset_rejects_inactive_or_unsupported_directory(
+    MockAssetRepo,
+    directory,
+    expected_text,
+):
+    db = AsyncMock()
+    mock_repo = MockAssetRepo.return_value
+    mock_repo.find_directory_by_symbol = AsyncMock(return_value=directory)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await create_asset(db, directory.symbol, None)
+
+    assert exc_info.value.status_code == 404
+    assert expected_text in exc_info.value.detail
+    mock_repo.create.assert_not_called()
 
 
 @patch("app.services.asset_service.AssetRepository")
 async def test_create_asset_existing_returns_record_without_group_mutation(MockAssetRepo):
-    """When the asset already exists, return it without touching any group.
-
-    Regression: previously the existing-asset branch silently re-added the
-    asset to the default Watchlist group, which clobbered intentional
-    removals.
-    """
     db = AsyncMock()
     mock_repo = MockAssetRepo.return_value
-    existing = _make_asset()
+    mock_repo.find_directory_by_symbol = AsyncMock(return_value=_directory())
+    existing = _make_asset(symbol="2330")
     mock_repo.find_by_symbol = AsyncMock(return_value=existing)
 
     with patch("app.services.asset_service.GroupRepository") as MockGroupRepo:
-        result = await create_asset(db, symbol="AAPL", name="Apple", asset_type=AssetType.STOCK)
+        result = await create_asset(db, symbol="2330", name="台積電")
 
     assert result is existing
-    mock_repo.save.assert_not_called()
     mock_repo.create.assert_not_called()
     MockGroupRepo.assert_not_called()
 
 
 @patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
 @patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_does_not_touch_groups(MockAssetRepo, mock_validate, _mock_ensure):
-    """A successful create should never load or mutate any group."""
+async def test_create_asset_does_not_touch_groups(MockAssetRepo, _mock_ensure):
     db = AsyncMock()
     mock_repo = MockAssetRepo.return_value
+    mock_repo.find_directory_by_symbol = AsyncMock(return_value=_directory())
     mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    mock_repo.create = AsyncMock(return_value=_make_asset())
+    mock_repo.create = AsyncMock(return_value=_make_asset(symbol="2330"))
 
     with patch("app.services.asset_service.GroupRepository") as MockGroupRepo:
-        await create_asset(db, symbol="AAPL", name="Apple", asset_type=AssetType.STOCK)
+        await create_asset(db, symbol="2330", name=None)
 
     MockGroupRepo.assert_not_called()
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_auto_resolves_from_yahoo(MockAssetRepo, mock_validate, _mock_ensure):
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {"symbol": "NVDA", "name": "NVIDIA Corporation", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    new_asset = _make_asset(symbol="NVDA", name="NVIDIA Corporation")
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    await create_asset(db, symbol="NVDA", name=None, asset_type=AssetType.STOCK)
-
-    mock_validate.validate.assert_awaited_once_with("NVDA")
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["name"] == "NVIDIA Corporation"
-    assert call_kwargs["currency"] == "USD"
-
-
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_yahoo_not_found_raises_404(MockRepo, mock_validate):
-    db = AsyncMock()
-    mock_repo = MockRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = None
-
-    from fastapi import HTTPException
-    with pytest.raises(HTTPException) as exc_info:
-        await create_asset(db, symbol="XXXX", name=None, asset_type=AssetType.STOCK)
-    assert exc_info.value.status_code == 404
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_detects_etf_type(MockAssetRepo, mock_validate, _mock_ensure):
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {"symbol": "SPY", "name": "SPDR S&P 500", "type": "ETF", "currency": "USD", "currency_code": "USD"}
-    new_asset = _make_asset(symbol="SPY", type=AssetType.ETF)
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    # None = "you decide". An explicit STOCK here would be a user choice and
-    # would win — see test_create_asset_explicit_type_beats_detection.
-    await create_asset(db, symbol="SPY", name=None, asset_type=None)
-
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["type"] == AssetType.ETF
-    assert call_kwargs["type_source"] is FieldSource.AUTO
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_detects_index_type(MockAssetRepo, mock_validate, _mock_ensure):
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {
-        "symbol": "^TYX", "name": "Treasury Yield 30 Years", "type": "INDEX", "currency": "USD", "currency_code": "USD",
-    }
-    new_asset = _make_asset(symbol="^TYX", type=AssetType.INDEX)
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    await create_asset(db, symbol="^TYX", name=None, asset_type=None)
-
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["type"] == AssetType.INDEX
-    # Shape also says how the number reads: a yield is a rate, not a price.
-    assert call_kwargs["unit_kind"] is UnitKind.PERCENT
-    assert call_kwargs["unit_source"] is FieldSource.AUTO
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_explicit_type_beats_detection(MockAssetRepo, mock_validate, _mock_ensure):
-    """A supplied type is a human decision: detection yields to it, and the row
-    records that a human made the call so suggestions stay quiet afterwards."""
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {
-        "symbol": "^TYX", "name": "Treasury Yield 30 Years", "type": "INDEX", "currency": "USD", "currency_code": "USD",
-    }
-    mock_repo.create = AsyncMock(return_value=_make_asset(symbol="^TYX", type=AssetType.STOCK))
-
-    await create_asset(db, symbol="^TYX", name=None, asset_type=AssetType.STOCK)
-
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["type"] == AssetType.STOCK
-    assert call_kwargs["type_source"] is FieldSource.USER
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_krw_currency_from_yahoo(MockAssetRepo, mock_validate, _mock_ensure):
-    """Regression test for #213: KRW-denominated assets should detect currency correctly."""
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {
-        "symbol": "006260.KS", "name": "LS Corp", "type": "EQUITY", "currency": "KRW", "currency_code": "KRW",
-    }
-    new_asset = _make_asset(symbol="006260.KS", name="LS Corp", currency="KRW")
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    await create_asset(db, symbol="006260.KS", name=None, asset_type=AssetType.STOCK)
-
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["currency"] == "KRW"
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_with_name_still_detects_currency(MockAssetRepo, mock_validate, _mock_ensure):
-    """When name is provided, currency should still be detected from Yahoo Finance."""
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = {
-        "symbol": "006260.KS", "name": "LS Corp", "type": "EQUITY", "currency": "KRW", "currency_code": "KRW",
-    }
-    new_asset = _make_asset(symbol="006260.KS", name="LS Corp", currency="KRW")
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    await create_asset(db, symbol="006260.KS", name="LS Corp", asset_type=AssetType.STOCK)
-
-    mock_validate.validate.assert_awaited_once_with("006260.KS")
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["currency"] == "KRW"
-    assert call_kwargs["name"] == "LS Corp"  # user-provided name preserved
-
-
-@patch(_ensure_patch, new_callable=AsyncMock)
-@patch("app.services.asset_service.yahoo_client")
-@patch("app.services.asset_service.AssetRepository")
-async def test_create_asset_with_name_yahoo_fails_uses_suffix(MockAssetRepo, mock_validate, _mock_ensure):
-    """When name is provided but Yahoo fails, fall back to exchange suffix for currency."""
-    db = AsyncMock()
-    mock_repo = MockAssetRepo.return_value
-    mock_repo.find_by_symbol = AsyncMock(return_value=None)
-    mock_validate.validate = AsyncMock(); mock_validate.validate.return_value = None  # Yahoo validation fails
-
-    new_asset = _make_asset(symbol="006260.KS", name="LS Corp", currency="KRW")
-    mock_repo.create = AsyncMock(return_value=new_asset)
-
-    await create_asset(db, symbol="006260.KS", name="LS Corp", asset_type=AssetType.STOCK)
-
-    call_kwargs = mock_repo.create.call_args[1]
-    assert call_kwargs["currency"] == "KRW"  # from suffix fallback
 
 
 @patch("app.services.asset_service.AssetRepository")
@@ -292,7 +223,6 @@ async def test_update_asset_missing_raises_404():
     db = AsyncMock()
     db.get = AsyncMock(return_value=None)
 
-    from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc_info:
         await update_asset(db, asset_id=999, name="x")
     assert exc_info.value.status_code == 404
@@ -319,10 +249,7 @@ async def test_delete_asset_removes_from_default_group(MockAssetRepo, MockGroupR
 @patch("app.services.asset_service.GroupRepository")
 @patch("app.services.asset_service.AssetRepository")
 async def test_delete_asset_raises_when_no_default_group(MockAssetRepo, MockGroupRepo):
-    """Regression for #507: silently no-op'ing when no group has is_default=true
-    is the worst-case UX. Surface it as 500 instead so the misconfig is loud."""
-    from fastapi import HTTPException
-
+    """A missing default group is a loud configuration error."""
     db = AsyncMock()
     asset = _make_asset()
 

@@ -92,3 +92,10 @@ async def nullify_source_symbols(source_id: int, db: AsyncSession) -> None:
         .values(source_id=None)
     )
     await db.execute(stmt)
+
+
+async def sync_taiwan_directory(db: AsyncSession, **kwargs):
+    """Compatibility seam for the Taiwan reference/contract directory sync."""
+    from app.services.taiwan_symbol_directory import sync_taiwan_symbol_directory
+
+    return await sync_taiwan_symbol_directory(db, **kwargs)

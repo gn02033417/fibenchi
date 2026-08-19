@@ -1,8 +1,24 @@
 import pytest
 
-from tests.helpers import create_asset_via_api
+from tests.helpers import create_asset_via_api, seed_taiwan_directory
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
+
+
+@pytest.fixture(autouse=True)
+async def _seed_directory(db):
+    await seed_taiwan_directory(db, [
+        {"symbol": "2331", "name": "測試股票一"},
+        {"symbol": "2332", "name": "測試股票二"},
+    ])
+
+
+@pytest.fixture(autouse=True)
+def _disable_historical_sync(monkeypatch):
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.pseudo_etf_service.sync_asset_prices", _noop)
 
 
 async def test_create_pseudo_etf(client):
@@ -54,8 +70,8 @@ async def test_delete_pseudo_etf(client):
 
 
 async def test_add_constituents(client):
-    a1 = await create_asset_via_api(client, "QBTS", "D-Wave")
-    a2 = await create_asset_via_api(client, "IONQ", "IonQ")
+    a1 = await create_asset_via_api(client, "2331", "測試股票一")
+    a2 = await create_asset_via_api(client, "2332", "測試股票二")
 
     resp = await client.post("/api/pseudo-etfs", json={"name": "Quantum", "base_date": "2025-01-01"})
     etf_id = resp.json()["id"]
@@ -68,8 +84,8 @@ async def test_add_constituents(client):
 
 
 async def test_remove_constituent(client):
-    a1 = await create_asset_via_api(client, "QBTS", "D-Wave")
-    a2 = await create_asset_via_api(client, "IONQ", "IonQ")
+    a1 = await create_asset_via_api(client, "2331", "測試股票一")
+    a2 = await create_asset_via_api(client, "2332", "測試股票二")
 
     resp = await client.post("/api/pseudo-etfs", json={"name": "Quantum", "base_date": "2025-01-01"})
     etf_id = resp.json()["id"]
@@ -81,7 +97,7 @@ async def test_remove_constituent(client):
     resp = await client.delete(f"/api/pseudo-etfs/{etf_id}/constituents/{a1['id']}")
     assert resp.status_code == 200
     assert len(resp.json()["constituents"]) == 1
-    assert resp.json()["constituents"][0]["symbol"] == "IONQ"
+    assert resp.json()["constituents"][0]["symbol"] == "2332"
 
 
 async def test_duplicate_name(client):

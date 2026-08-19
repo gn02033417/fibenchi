@@ -1,0 +1,17 @@
+[
+  {
+    "SecuritiesCompanyCode": "6488",
+    "CompanyAbbreviation": "環球晶",
+    "SecuritiesIndustryCode": "半導體業"
+  },
+  {
+    "SecuritiesCompanyCode": "700001",
+    "CompanyAbbreviation": "測試權證",
+    "SecurityType": "WARRANT"
+  },
+  {
+    "SecuritiesCompanyCode": "9800",
+    "CompanyAbbreviation": "測試興櫃",
+    "SecurityType": "EMERGING"
+  }
+]

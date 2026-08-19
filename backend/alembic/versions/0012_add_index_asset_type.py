@@ -15,11 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # PostgreSQL: ALTER TYPE ... ADD VALUE cannot run inside a transaction
-    # in older versions, but it works fine in PG 12+ which is our target.
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE assettype ADD VALUE IF NOT EXISTS 'index'")
+        with op.get_context().autocommit_block():
+            op.execute("ALTER TYPE assettype ADD VALUE IF NOT EXISTS 'index'")
 
 
 def downgrade() -> None:

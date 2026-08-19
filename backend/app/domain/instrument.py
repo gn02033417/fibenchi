@@ -80,8 +80,18 @@ class Instrument:
     unit: UnitKind = UnitKind.CURRENCY
 
 
-def classify(ticker: str) -> Instrument:
-    """One-pass classification of a Yahoo ticker into its instrument traits."""
+def classify(
+    ticker: str,
+    *,
+    exchange: str | None = None,
+    currency: str | None = None,
+) -> Instrument:
+    """Classify a ticker, optionally using verified stored exchange metadata.
+
+    Without metadata this keeps the legacy shape-only behavior used by
+    overseas/ephemeral symbols. Stored Taiwan assets pass ``exchange`` so a
+    raw code such as ``2330`` never falls through to the US default.
+    """
     # Imported here, not at module top: the listing tables live in
     # market_calendar, whose package init imports back into app.domain
     # (schedule → classify). Keeping this module import-pure at load time is
@@ -89,6 +99,7 @@ def classify(ticker: str) -> Instrument:
     from app.services.market_calendar.listings import (
         CRYPTO_QUOTE_CURRENCIES,
         DEFAULT_US_CALENDAR,
+        EXCHANGE_LISTINGS,
         FIAT_QUOTES,
         INDEX_CALENDARS,
         PERCENT_QUOTED_INDICES,
@@ -104,6 +115,10 @@ def classify(ticker: str) -> Instrument:
     sym = ticker.upper().strip()
     if not sym:
         return Instrument(AssetKind.UNKNOWN)
+    if exchange:
+        listing = EXCHANGE_LISTINGS.get(exchange.upper().strip())
+        if listing:
+            return Instrument(AssetKind.EQUITY, listing.calendar, listing.currency)
     if sym in INDEX_CALENDARS:
         return index(sym, INDEX_CALENDARS[sym])
     if sym.startswith("^"):

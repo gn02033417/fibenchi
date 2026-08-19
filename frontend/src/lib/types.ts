@@ -350,6 +350,15 @@ export interface Quote {
   avg_volume: number | null
   currency: string
   market_state: MarketState | null
+  open: number | null
+  high: number | null
+  low: number | null
+  bid: number | null
+  bid_volume: number | null
+  ask: number | null
+  ask_volume: number | null
+  data_status: "LIVE" | "CACHED" | "DISCONNECTED" | null
+  updated_at: string | null
 }
 
 export interface IntradayPoint {

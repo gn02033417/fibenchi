@@ -2,12 +2,17 @@
 
 from app.config import settings
 from app.services.price_providers.base import PriceProvider
-from app.services.price_providers.yahoo import YahooPriceProvider
+from app.services.price_providers.shioaji import ShioajiPriceProvider
 
-__all__ = ["PriceProvider", "init_price_provider", "get_price_provider"]
+__all__ = [
+    "PriceProvider",
+    "ShioajiPriceProvider",
+    "init_price_provider",
+    "get_price_provider",
+]
 
 _PROVIDERS: dict[str, type[PriceProvider]] = {
-    "yahoo": YahooPriceProvider,
+    "shioaji": ShioajiPriceProvider,
 }
 
 _instance: PriceProvider | None = None

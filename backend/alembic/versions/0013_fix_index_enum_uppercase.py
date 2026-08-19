@@ -29,7 +29,8 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE assettype ADD VALUE IF NOT EXISTS 'INDEX'")
+        with op.get_context().autocommit_block():
+            op.execute("ALTER TYPE assettype ADD VALUE IF NOT EXISTS 'INDEX'")
 
 
 def downgrade() -> None:

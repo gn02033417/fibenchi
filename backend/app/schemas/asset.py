@@ -101,6 +101,7 @@ class AssetResponse(BaseModel):
     symbol: str = Field(description="Ticker symbol")
     name: str = Field(description="Display name")
     type: AssetType = Field(description="Asset type: stock or etf")
+    exchange: str | None = Field(default=None, description="Verified exchange (e.g. TSE or OTC)")
     currency: str = Field(default="USD", description="ISO 4217 currency code")
     unit_kind: UnitKind = Field(
         default=UnitKind.CURRENCY,

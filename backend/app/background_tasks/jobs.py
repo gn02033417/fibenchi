@@ -20,6 +20,7 @@ from app.services.intraday import cleanup_old_intraday, fetch_and_store_intraday
 from app.services.market_calendar import any_venue_open
 from app.services.price_sync import sync_all_prices
 from app.services.symbol_sync_service import sync_all_enabled as sync_all_symbol_sources
+from app.services.symbol_sync_service import sync_taiwan_directory
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,25 @@ async def scheduled_symbol_sync():
             logger.info(f"Symbol sync complete: {len(counts)} sources, {total} symbols")
         except Exception:
             logger.exception("Scheduled symbol sync failed")
+
+
+@background_task(
+    "taiwan_symbol_directory_sync",
+    trigger=CronTrigger(minute="0", hour="7", timezone="Asia/Taipei"),
+)
+async def scheduled_taiwan_symbol_directory_sync():
+    """Refresh Taiwan reference/contract truth before the local market opens."""
+    logger.info("Running scheduled Taiwan symbol directory sync...")
+    async with async_session() as db:
+        result = await sync_taiwan_directory(db)
+        if result.status == "success":
+            logger.info(
+                "Taiwan symbol directory sync complete: %d active, %d inactive",
+                result.active_count,
+                result.inactive_count,
+            )
+        else:
+            logger.error("Taiwan symbol directory sync failed: %s", result.error)
 
 
 @background_task("intraday_sync", trigger=IntervalTrigger(seconds=60))

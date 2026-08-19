@@ -2,14 +2,19 @@
 
 import pytest
 
+from tests.helpers import seed_taiwan_directory
+
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
+@pytest.fixture(autouse=True)
+async def seed_directory(db):
+    await seed_taiwan_directory(db, [{"symbol": "2331", "name": "測試股票一"}])
+
+
 async def _create_asset(client):
-    """Create an AAPL asset. The conftest's autouse ``mock_yahoo_validate``
-    fixture provides a deterministic Yahoo response without any extra
-    plumbing here."""
-    resp = await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple", "type": "stock"})
+    """Create a directory-backed Taiwan stock asset."""
+    resp = await client.post("/api/assets", json={"symbol": "2331", "name": "測試股票一", "type": "stock"})
     assert resp.status_code == 201
     return resp.json()
 
@@ -17,16 +22,16 @@ async def _create_asset(client):
 class TestListAnnotations:
     async def test_empty_list(self, client):
         await _create_asset(client)
-        resp = await client.get("/api/assets/AAPL/annotations")
+        resp = await client.get("/api/assets/2331/annotations")
         assert resp.status_code == 200
         assert resp.json() == []
 
     async def test_returns_created_annotations(self, client):
         await _create_asset(client)
-        await client.post("/api/assets/AAPL/annotations", json={
+        await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "Earnings", "body": "Beat estimates",
         })
-        resp = await client.get("/api/assets/AAPL/annotations")
+        resp = await client.get("/api/assets/2331/annotations")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
@@ -40,7 +45,7 @@ class TestListAnnotations:
 class TestCreateAnnotation:
     async def test_creates_annotation(self, client):
         await _create_asset(client)
-        resp = await client.post("/api/assets/AAPL/annotations", json={
+        resp = await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "Earnings", "body": "Q1 beat",
         })
         assert resp.status_code == 201
@@ -52,7 +57,7 @@ class TestCreateAnnotation:
 
     async def test_custom_color(self, client):
         await _create_asset(client)
-        resp = await client.post("/api/assets/AAPL/annotations", json={
+        resp = await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "Alert", "color": "#ff0000",
         })
         assert resp.status_code == 201
@@ -60,7 +65,7 @@ class TestCreateAnnotation:
 
     async def test_invalid_color_rejected(self, client):
         await _create_asset(client)
-        resp = await client.post("/api/assets/AAPL/annotations", json={
+        resp = await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "Bad", "color": "red",
         })
         assert resp.status_code == 422
@@ -73,7 +78,7 @@ class TestCreateAnnotation:
 
     async def test_body_is_optional(self, client):
         await _create_asset(client)
-        resp = await client.post("/api/assets/AAPL/annotations", json={
+        resp = await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "No body",
         })
         assert resp.status_code == 201
@@ -83,21 +88,21 @@ class TestCreateAnnotation:
 class TestDeleteAnnotation:
     async def test_deletes_annotation(self, client):
         await _create_asset(client)
-        create_resp = await client.post("/api/assets/AAPL/annotations", json={
+        create_resp = await client.post("/api/assets/2331/annotations", json={
             "date": "2025-01-15", "title": "To delete",
         })
         ann_id = create_resp.json()["id"]
 
-        resp = await client.delete(f"/api/assets/AAPL/annotations/{ann_id}")
+        resp = await client.delete(f"/api/assets/2331/annotations/{ann_id}")
         assert resp.status_code == 204
 
         # Verify it's gone
-        list_resp = await client.get("/api/assets/AAPL/annotations")
+        list_resp = await client.get("/api/assets/2331/annotations")
         assert list_resp.json() == []
 
     async def test_404_for_nonexistent_annotation(self, client):
         await _create_asset(client)
-        resp = await client.delete("/api/assets/AAPL/annotations/999")
+        resp = await client.delete("/api/assets/2331/annotations/999")
         assert resp.status_code == 404
 
     async def test_404_for_unknown_asset(self, client):

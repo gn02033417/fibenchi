@@ -1,31 +1,21 @@
-from contextlib import contextmanager
-from unittest.mock import AsyncMock
-
 import pytest
 
-from app.services import asset_service
+from app.models.symbol_directory import SymbolDirectory
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
-@contextmanager
-def _mock_validate(*, return_value=None, side_effect=None):
-    """Override the autouse ``yahoo_client`` mock's ``validate`` for the test.
-
-    The conftest ``mock_yahoo_validate`` fixture rebinds
-    ``asset_service.yahoo_client`` to a fresh MagicMock per test; this
-    helper just configures its ``validate`` attribute for the duration of
-    the with-block so each test can specify its own response.
-    """
-    original = asset_service.yahoo_client.validate
-    if side_effect is not None:
-        asset_service.yahoo_client.validate = AsyncMock(side_effect=side_effect)
-    else:
-        asset_service.yahoo_client.validate = AsyncMock(return_value=return_value)
-    try:
-        yield
-    finally:
-        asset_service.yahoo_client.validate = original
+@pytest.fixture(autouse=True)
+async def seed_taiwan_directory(db):
+    db.add_all([
+        SymbolDirectory(symbol="2330", name="台積電", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="0050", name="元大台灣50", exchange="TSE", type="etf", currency="TWD"),
+        SymbolDirectory(symbol="6488", name="環球晶", exchange="OTC", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="2317", name="鴻海", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="2454", name="聯發科", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="2603", name="長榮", exchange="TSE", type="stock", currency="TWD"),
+    ])
+    await db.commit()
 
 
 async def test_list_assets_empty(client):
@@ -35,66 +25,59 @@ async def test_list_assets_empty(client):
 
 
 async def test_create_asset_with_name(client):
-    mock_info = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={
-            "symbol": "AAPL",
-            "name": "Apple Inc.",
-            "type": "stock",
-        })
+    resp = await client.post("/api/assets", json={
+        "symbol": "2330",
+        "name": "caller supplied name",
+        "type": "etf",
+    })
     assert resp.status_code == 201
     data = resp.json()
-    assert data["symbol"] == "AAPL"
-    assert data["name"] == "Apple Inc."
+    assert data["symbol"] == "2330"
+    assert data["name"] == "台積電"
     assert data["type"] == "stock"
-    assert data["currency"] == "USD"
+    assert data["exchange"] == "TSE"
+    assert data["currency"] == "TWD"
 
 
 async def test_create_asset_auto_resolve(client):
-    mock_info = {"symbol": "NVDA", "name": "NVIDIA Corporation", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "nvda"})
+    resp = await client.post("/api/assets", json={"symbol": "6488"})
     assert resp.status_code == 201
-    assert resp.json()["symbol"] == "NVDA"
-    assert resp.json()["name"] == "NVIDIA Corporation"
-    assert resp.json()["currency"] == "USD"
+    assert resp.json()["symbol"] == "6488"
+    assert resp.json()["name"] == "環球晶"
+    assert resp.json()["exchange"] == "OTC"
+    assert resp.json()["currency"] == "TWD"
 
 
 async def test_create_asset_with_currency(client):
-    mock_info = {"symbol": "VWCE.DE", "name": "Vanguard FTSE All-World", "type": "ETF", "currency": "EUR", "currency_code": "EUR"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "vwce.de"})
+    resp = await client.post("/api/assets", json={"symbol": "0050"})
     assert resp.status_code == 201
     data = resp.json()
-    assert data["symbol"] == "VWCE.DE"
-    assert data["currency"] == "EUR"
+    assert data["symbol"] == "0050"
+    assert data["exchange"] == "TSE"
+    assert data["currency"] == "TWD"
     assert data["type"] == "etf"
 
 
 async def test_create_asset_krw_currency(client):
-    """Regression test for #213: KOSPI assets should have KRW currency."""
-    mock_info = {"symbol": "006260.KS", "name": "LS Corp", "type": "EQUITY", "currency": "KRW", "currency_code": "KRW"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "006260.KS"})
+    """Taiwan directory entries always create with TWD."""
+    resp = await client.post("/api/assets", json={"symbol": "6488"})
     assert resp.status_code == 201
     data = resp.json()
-    assert data["symbol"] == "006260.KS"
-    assert data["currency"] == "KRW"
-    assert data["name"] == "LS Corp"
+    assert data["symbol"] == "6488"
+    assert data["currency"] == "TWD"
+    assert data["name"] == "環球晶"
 
 
 async def test_create_asset_invalid_symbol(client):
-    with _mock_validate(return_value=None):
-        resp = await client.post("/api/assets", json={"symbol": "XXXX"})
+    resp = await client.post("/api/assets", json={"symbol": "AAPL"})
     assert resp.status_code == 404
+    assert "Taiwan symbol directory" in resp.json()["detail"]
 
 
 async def test_create_duplicate_asset_returns_existing(client):
     """Creating an asset that already exists returns the existing record (idempotent)."""
-    mock_info = {"symbol": "AAPL", "name": "Apple", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp1 = await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple"})
-        resp2 = await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple"})
+    resp1 = await client.post("/api/assets", json={"symbol": "2330", "name": "台積電"})
+    resp2 = await client.post("/api/assets", json={"symbol": "2330", "name": "台積電"})
     assert resp2.status_code == 201
     assert resp2.json()["id"] == resp1.json()["id"]
 
@@ -103,14 +86,12 @@ async def test_delete_asset(client):
     """``DELETE /api/assets/{symbol}`` is a soft-delete: the row is preserved
     so pseudo-ETF constituent relationships stay intact. The asset remains
     visible in the listing — only group membership is removed."""
-    mock_info = {"symbol": "AAPL", "name": "Apple", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple"})
-    resp = await client.delete("/api/assets/AAPL")
+    await client.post("/api/assets", json={"symbol": "2330", "name": "台積電"})
+    resp = await client.delete("/api/assets/2330")
     assert resp.status_code == 204
 
     resp = await client.get("/api/assets")
-    assert [a["symbol"] for a in resp.json()] == ["AAPL"]
+    assert [a["symbol"] for a in resp.json()] == ["2330"]
 
 
 async def test_delete_nonexistent_asset(client):
@@ -243,84 +224,51 @@ async def test_hard_delete_nonexistent_asset(client):
 async def test_list_assets_returns_created(client):
     """``GET /api/assets`` returns every asset, ordered by symbol —
     including orphans not yet attached to any group."""
-    mock_aapl = {"symbol": "AAPL", "name": "Apple", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    mock_msft = {"symbol": "MSFT", "name": "Microsoft", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(side_effect=[mock_aapl, mock_msft]):
-        await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple"})
-        await client.post("/api/assets", json={"symbol": "MSFT", "name": "Microsoft"})
+    await client.post("/api/assets", json={"symbol": "2330", "name": "台積電"})
+    await client.post("/api/assets", json={"symbol": "6488", "name": "環球晶"})
 
     resp = await client.get("/api/assets")
     assert resp.status_code == 200
     symbols = [a["symbol"] for a in resp.json()]
-    assert symbols == ["AAPL", "MSFT"]
+    assert symbols == ["2330", "6488"]
 
 
 async def test_list_assets_includes_orphans(client):
     """Regression for #507: a freshly POSTed asset must appear in GET /api/assets
     even before it has been attached to any group."""
-    mock_info = {"symbol": "OKLO", "name": "Oklo", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        await client.post("/api/assets", json={"symbol": "OKLO", "name": "Oklo"})
+    await client.post("/api/assets", json={"symbol": "2454", "name": "聯發科"})
 
     resp = await client.get("/api/assets")
     assert resp.status_code == 200
     symbols = [a["symbol"] for a in resp.json()]
-    assert "OKLO" in symbols
+    assert "2454" in symbols
 
 
-# --- Classification, units and provenance (#617) ---
-#
-# Yahoo's quoteType is a live lookup frozen into the row at creation, and it has
-# been wrong: six caret symbols landed as stock and formatted as currency ever
-# since. Shape answers the same question offline and can't drift. But shape does
-# not get to overrule a human — provenance is what keeps a recommendation a
-# recommendation.
+# --- Taiwan directory metadata and provenance ---
 
-async def test_caret_symbol_detected_as_index(client):
-    """The exact ^GSPC failure: Yahoo says EQUITY, shape says index."""
-    mock_info = {"symbol": "^GSPC", "name": "S&P 500", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "^GSPC"})
+async def test_directory_metadata_controls_type_and_currency(client):
+    resp = await client.post("/api/assets", json={"symbol": "0050", "type": "stock"})
+
     assert resp.status_code == 201
     data = resp.json()
-    assert data["type"] == "index"
-    assert data["unit_kind"] == "points"
+    assert data["type"] == "etf"
+    assert data["exchange"] == "TSE"
+    assert data["currency"] == "TWD"
     assert data["type_source"] == "auto"
 
 
-async def test_yield_index_is_quoted_in_percent(client):
-    mock_info = {"symbol": "^TYX", "name": "Treasury Yield 30 Years", "type": "INDEX", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "^TYX"})
-    assert resp.json()["unit_kind"] == "percent"
+async def test_directory_metadata_controls_otc_stock(client):
+    resp = await client.post("/api/assets", json={"symbol": "6488"})
 
-
-async def test_explicit_type_is_honoured_and_marked_user(client):
-    """Shape does not overrule a human. An explicit type is a decision, and
-    recording it as USER is what stops Fibenchi arguing with it later."""
-    mock_info = {"symbol": "^N225", "name": "Nikkei 225", "type": "EQUITY", "currency": "JPY", "currency_code": "JPY"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "^N225", "type": "stock"})
+    assert resp.status_code == 201
     data = resp.json()
     assert data["type"] == "stock"
-    assert data["type_source"] == "user"
-    # ...and the suggestion stays silent about the field the user owns.
-    assert "type" not in data["suggested"]["disagrees"]
-
-
-async def test_yahoo_still_decides_etf_vs_stock(client):
-    """Shape can't see the ETF/stock distinction, so Yahoo keeps that call."""
-    mock_info = {"symbol": "VWCE.DE", "name": "Vanguard FTSE All-World", "type": "ETF", "currency": "EUR", "currency_code": "EUR"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "VWCE.DE"})
-    assert resp.json()["type"] == "etf"
-    assert resp.json()["unit_kind"] == "currency"
+    assert data["exchange"] == "OTC"
+    assert data["currency"] == "TWD"
 
 
 async def test_suggestion_is_silent_when_it_agrees(client):
-    mock_info = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        resp = await client.post("/api/assets", json={"symbol": "AAPL"})
+    resp = await client.post("/api/assets", json={"symbol": "2330"})
     assert resp.json()["suggested"]["disagrees"] == []
 
 
@@ -328,16 +276,17 @@ async def test_suggestion_flags_a_drifted_auto_row(client, db):
     """A row Fibenchi guessed wrong should offer itself up for correction."""
     from app.models import Asset, AssetType
 
-    mock_info = {"symbol": "^GSPC", "name": "S&P 500", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "^GSPC"})
-
-    # Simulate the pre-migration state: auto-detected, and wrong.
-    asset = await db.get(Asset, created.json()["id"])
-    asset.type = AssetType.STOCK
-    asset.unit_kind = "CURRENCY"
+    asset = Asset(
+        symbol="^GSPC",
+        name="S&P 500",
+        type=AssetType.STOCK,
+        currency="USD",
+        unit_kind="CURRENCY",
+    )
+    db.add(asset)
     await db.commit()
 
+    # Simulate the pre-migration state: auto-detected, and wrong.
     resp = await client.get("/api/assets")
     data = [a for a in resp.json() if a["symbol"] == "^GSPC"][0]
     assert set(data["suggested"]["disagrees"]) == {"type", "unit_kind"}
@@ -350,14 +299,18 @@ async def test_suggestion_flags_a_drifted_auto_row(client, db):
 async def test_editing_a_field_silences_its_suggestion(client, db):
     """The whole point of provenance: once you decide, Fibenchi stops nagging —
     even though the shape still disagrees just as much."""
-    from app.models import Asset
+    from app.models import Asset, AssetType
 
-    mock_info = {"symbol": "^GSPC", "name": "S&P 500", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "^GSPC"})
-    aid = created.json()["id"]
-
-    asset = await db.get(Asset, aid)
+    asset = Asset(
+        symbol="^GSPC",
+        name="S&P 500",
+        type=AssetType.INDEX,
+        currency="USD",
+        unit_kind="POINTS",
+    )
+    db.add(asset)
+    await db.commit()
+    aid = asset.id
     asset.unit_kind = "CURRENCY"
     await db.commit()
     before = await client.get("/api/assets")
@@ -372,9 +325,7 @@ async def test_editing_a_field_silences_its_suggestion(client, db):
 async def test_patching_currency_also_claims_the_unit(client):
     """unit_kind and currency answer one question together, so taking over
     either means taking over both."""
-    mock_info = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "AAPL"})
+    created = await client.post("/api/assets", json={"symbol": "2330"})
 
     resp = await client.patch(f"/api/assets/{created.json()['id']}", json={"currency": "EUR"})
     assert resp.json()["currency"] == "EUR"
@@ -388,10 +339,18 @@ async def test_user_set_field_stays_visible_and_resettable(client, db):
     `differs` — otherwise the recommendation vanishes the moment you touch the
     field, and the choice becomes one-way.
     """
-    mock_info = {"symbol": "^N225", "name": "Nikkei 225", "type": "EQUITY", "currency": "JPY", "currency_code": "JPY"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "^N225"})
-    aid = created.json()["id"]
+    from app.models import Asset, AssetType
+
+    asset = Asset(
+        symbol="^N225",
+        name="Nikkei 225",
+        type=AssetType.INDEX,
+        currency="JPY",
+        unit_kind="POINTS",
+    )
+    db.add(asset)
+    await db.commit()
+    aid = asset.id
 
     resp = await client.patch(f"/api/assets/{aid}", json={"type": "etf", "unit_kind": "currency"})
     data = resp.json()
@@ -400,13 +359,21 @@ async def test_user_set_field_stays_visible_and_resettable(client, db):
     assert set(data["suggested"]["differs"]) == {"type", "unit_kind"}  # but visible
 
 
-async def test_reset_detection_restores_auto(client):
+async def test_reset_detection_restores_auto(client, db):
     """The inverse of an edit: adopt the shape's answer and clear the flag, so
     the field tracks improvements again."""
-    mock_info = {"symbol": "^N225", "name": "Nikkei 225", "type": "EQUITY", "currency": "JPY", "currency_code": "JPY"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "^N225"})
-    aid = created.json()["id"]
+    from app.models import Asset, AssetType
+
+    asset = Asset(
+        symbol="^N225",
+        name="Nikkei 225",
+        type=AssetType.INDEX,
+        currency="JPY",
+        unit_kind="POINTS",
+    )
+    db.add(asset)
+    await db.commit()
+    aid = asset.id
     await client.patch(f"/api/assets/{aid}", json={"type": "etf", "unit_kind": "currency"})
 
     resp = await client.post(f"/api/assets/{aid}/reset-detection", json={})
@@ -419,11 +386,19 @@ async def test_reset_detection_restores_auto(client):
     assert data["suggested"]["differs"] == []
 
 
-async def test_reset_detection_is_per_field(client):
-    mock_info = {"symbol": "^N225", "name": "Nikkei 225", "type": "EQUITY", "currency": "JPY", "currency_code": "JPY"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "^N225"})
-    aid = created.json()["id"]
+async def test_reset_detection_is_per_field(client, db):
+    from app.models import Asset, AssetType
+
+    asset = Asset(
+        symbol="^N225",
+        name="Nikkei 225",
+        type=AssetType.INDEX,
+        currency="JPY",
+        unit_kind="POINTS",
+    )
+    db.add(asset)
+    await db.commit()
+    aid = asset.id
     await client.patch(f"/api/assets/{aid}", json={"type": "etf", "unit_kind": "currency"})
 
     resp = await client.post(f"/api/assets/{aid}/reset-detection", json={"fields": ["unit_kind"]})
@@ -433,11 +408,8 @@ async def test_reset_detection_is_per_field(client):
 
 
 async def test_reset_detection_leaves_currency_alone(client):
-    """The shape's currency is a venue-suffix fallback, weaker than Yahoo's —
-    resetting it could only make things worse."""
-    mock_info = {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "currency": "USD", "currency_code": "USD"}
-    with _mock_validate(return_value=mock_info):
-        created = await client.post("/api/assets", json={"symbol": "AAPL"})
+    """Resetting detection does not overwrite a user-set currency."""
+    created = await client.post("/api/assets", json={"symbol": "2330"})
     aid = created.json()["id"]
     await client.patch(f"/api/assets/{aid}", json={"currency": "EUR"})
 

@@ -6,9 +6,17 @@ import pytest
 
 from app.models import Asset, AssetType, PriceHistory
 from app.repositories.group_repo import GroupRepository
-from tests.helpers import create_asset_via_api, seed_asset_with_prices
+from tests.helpers import create_asset_via_api, seed_asset_with_prices, seed_taiwan_directory
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
+
+
+@pytest.fixture(autouse=True)
+async def seed_directory(db):
+    await seed_taiwan_directory(db, [
+        {"symbol": "2331", "name": "測試股票一"},
+        {"symbol": "2332", "name": "測試股票二"},
+    ])
 
 
 async def _get_default_group_id(db):
@@ -63,8 +71,8 @@ async def test_delete_group(client):
 
 
 async def test_add_assets_to_group(client):
-    a1 = await create_asset_via_api(client, "AAPL", "Apple")
-    a2 = await create_asset_via_api(client, "MSFT", "Microsoft")
+    a1 = await create_asset_via_api(client, "2331", "測試股票一")
+    a2 = await create_asset_via_api(client, "2332", "測試股票二")
 
     resp = await client.post("/api/groups", json={"name": "Tech"})
     gid = resp.json()["id"]
@@ -75,8 +83,8 @@ async def test_add_assets_to_group(client):
 
 
 async def test_remove_asset_from_group(client):
-    a1 = await create_asset_via_api(client, "AAPL", "Apple")
-    a2 = await create_asset_via_api(client, "MSFT", "Microsoft")
+    a1 = await create_asset_via_api(client, "2331", "測試股票一")
+    a2 = await create_asset_via_api(client, "2332", "測試股票二")
 
     resp = await client.post("/api/groups", json={"name": "Tech"})
     gid = resp.json()["id"]
@@ -86,7 +94,7 @@ async def test_remove_asset_from_group(client):
     resp = await client.delete(f"/api/groups/{gid}/assets/{a1['id']}")
     assert resp.status_code == 200
     assert len(resp.json()["assets"]) == 1
-    assert resp.json()["assets"][0]["symbol"] == "MSFT"
+    assert resp.json()["assets"][0]["symbol"] == "2332"
 
 
 async def test_duplicate_group_name(client):
