@@ -141,7 +141,7 @@ Discoveries:
 - No historical queue/Kbars implementation, live SSE/subscription path, or other TW-11 scope was added.
 
 ## Post-Goal Merge Gate
-Status: PARTIAL — TW-00 through TW-10 review/code gates are closed locally; Docker/PostgreSQL and GitHub Actions execution gates remain environment-blocked.
+Status: COMPLETE — all non-credential TW-00 through TW-10 merge gates passed; final Shioaji health calls remain an explicit manual credential gate.
 Scope:
 - No TW-11+ source, ticket, or redesign was added.
 
@@ -157,15 +157,15 @@ Verification:
 - Frontend direct binaries: ESLint passed; TypeScript/Vite build passed; Vitest `7 files / 50 tests` passed.
 - Compose YAML/static topology assertions passed for both `docker-compose.yaml` and `docker-compose.prod.yaml`.
 - `uv tool run --from shioaji==1.7.0 shioaji server start --help` and `shioaji tree --all` passed. The pinned CLI exposes no host/bind option; the official v1.7.0 server image supplies `SJ_HTTP_ADDR=0.0.0.0:8080`.
-- A no-credential server probe failed deterministically before HTTP startup with `api_key must be at least 10 characters, got 0`; no credentials were used or stored.
+- The official v1.7.0 `Dockerfile-server` confirms `ENV SJ_HTTP_ADDR=0.0.0.0:8080`, `EXPOSE 8080`, and a persistent `shioaji server start --no-open` entrypoint. Both Compose files use that image and keep backend-to-sidecar traffic on `http://shioaji:8080`.
+- No-credential and fake-key server probes fail deterministically at authentication before HTTP startup (`api_key must be at least 10 characters, got 0`; invalid/nonexistent key errors); no real credentials were used or stored.
+- GitHub Actions run `32265487324` / run #4 passed: `test-backend` (Ruff, clean PostgreSQL migration, contract sync, pytest, pip-audit) and `test-frontend` (pnpm install, lint, build, test, audit) succeeded; `build-image` was correctly skipped for the PR event.
+- The clean PostgreSQL gate reached Alembic head `0022` and read back `exchange` columns on both `assets` and `symbol_directory`. The gate exposed the pre-existing PostgreSQL enum transaction defect; `0012` and `0013` now use Alembic `autocommit_block()` so `INDEX` is committed before later migrations use it.
 
 Remaining gates:
-- Docker/Podman/containerd are unavailable on this machine, so image pull, container lifecycle, Compose startup, and backend-to-sidecar `/api/v1/health`, `/api/v1/info`, `/api/v1/stream/status` calls were not runtime-verified.
-- No local PostgreSQL client or listener is available. A clean SQLite migration probe stopped at pre-existing PostgreSQL-only migration `0008` (`ALTER TABLE ... ALTER COLUMN ... TYPE`); full clean PostgreSQL migration through `0022` is therefore not claimed. The focused 0021/0022 migration tests pass.
-- GitHub Actions workflow `ci.yaml` contains the expected `pull_request` targets `main`/`dev`, but the remote PR head has zero workflow runs and zero commit statuses. The public Actions page reports `0 workflow runs`; no connector operation is available to dispatch a run or change repository Actions settings.
-- `pnpm run lint` is blocked before the script by the Codex runtime's automatic install check (`ERR_PNPM_IGNORED_BUILDS` for `esbuild` and `msw`). The generated `frontend/pnpm-workspace.yaml` was removed; direct existing binaries passed the equivalent lint/build/test checks above.
+- Docker/Podman/containerd are unavailable on this machine, so local image pull, container lifecycle, Compose startup, and direct backend-to-sidecar calls to `/api/v1/health`, `/api/v1/info`, and `/api/v1/stream/status` could not be executed here. The official image topology and bind address are verified; the remaining live health check requires a real Shioaji credential and a container-capable environment.
+- GitHub Actions was initially disabled because the repository was forked with workflow files already present; repository-scope Actions was enabled, the existing `pull_request` trigger fired, and the required checks passed on run #4.
 
 Remote state:
-- PR #1 remains open against `dev`; review findings were fixed in the local checkout.
-- Native HTTPS/SSH push authentication remains unavailable, so the connector mirror history is retained and must be updated through the existing PR head without force-pushing.
-
+- PR #1 remains open against `dev`; no new PR was created and the three review findings remain fixed in the source.
+- Native HTTPS/SSH push authentication remains unavailable. The existing connector mirror branch was safely fast-forwarded to `18312cd5c751d2ad6490fb400a98afddcfbbccfd`; local ticket-level history remains in the checkout, including `fc89d59` for the migration gate fix.
