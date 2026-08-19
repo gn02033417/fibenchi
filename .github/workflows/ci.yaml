@@ -17,6 +17,18 @@ permissions:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fibenchi
+          POSTGRES_PASSWORD: fibenchi
+          POSTGRES_DB: fibenchi
+        options: >-
+          --health-cmd "pg_isready -U fibenchi -d fibenchi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -34,6 +46,35 @@ jobs:
 
       - run: uv pip install --system -r requirements-dev.txt
       - run: ruff check .
+
+      - name: Upgrade and verify clean PostgreSQL database
+        env:
+          DATABASE_URL: postgresql+asyncpg://fibenchi:fibenchi@127.0.0.1:5432/fibenchi
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import asyncio
+
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+
+          async def main():
+              engine = create_async_engine("postgresql+asyncpg://fibenchi:fibenchi@127.0.0.1:5432/fibenchi")
+              async with engine.connect() as connection:
+                  version = (await connection.execute(text("SELECT version_num FROM alembic_version"))).scalar_one()
+                  assert version == "0022", version
+                  for table in ("assets", "symbol_directory"):
+                      result = await connection.execute(
+                          text(
+                              "SELECT 1 FROM information_schema.columns "
+                              "WHERE table_name = :table AND column_name = 'exchange'"
+                          ),
+                          {"table": table},
+                      )
+                      assert result.scalar_one_or_none() == 1, table
+              await engine.dispose()
+
+          asyncio.run(main())
 
       # The cross-language contract artifacts are generated from Python sources
       # (schemas/companion.py, compute/indicators.py) and consumed by the
@@ -114,3 +155,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
