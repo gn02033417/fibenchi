@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.symbol_directory import SymbolDirectory
 from app.schemas.quote import Quote
 from app.services.quote_service import _reset_asset_list_cache
 from tests.conftest import TestSession
@@ -15,24 +16,33 @@ pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 _MOCK_QUOTES = [
     Quote(**{
-        "symbol": "AAPL",
-        "price": 185.50,
-        "previous_close": 184.00,
-        "change": 1.50,
-        "change_percent": 0.82,
-        "currency": "USD",
+        "symbol": "2330",
+        "price": 2240.00,
+        "previous_close": 2265.00,
+        "change": -25.00,
+        "change_percent": -1.10,
+        "currency": "TWD",
         "market_state": "REGULAR",
     }),
     Quote(**{
-        "symbol": "MSFT",
-        "price": 420.00,
-        "previous_close": 418.50,
+        "symbol": "0050",
+        "price": 183.50,
+        "previous_close": 182.00,
         "change": 1.50,
-        "change_percent": 0.36,
-        "currency": "USD",
+        "change_percent": 0.82,
+        "currency": "TWD",
         "market_state": "REGULAR",
     }),
 ]
+
+
+@pytest.fixture(autouse=True)
+async def seed_taiwan_directory(db):
+    db.add_all([
+        SymbolDirectory(symbol="2330", name="台積電", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="0050", name="元大台灣50", exchange="TSE", type="etf", currency="TWD"),
+    ])
+    await db.commit()
 
 
 def _parse_sse_events(body: str) -> list[dict]:
@@ -61,14 +71,14 @@ async def test_get_quotes_returns_data(client):
     """GET /api/quotes returns quote data for requested symbols."""
     mock_prov = _mock_provider(quotes_return=_MOCK_QUOTES)
     with patch("app.services.quote_service.get_price_provider", return_value=mock_prov):
-        resp = await client.get("/api/quotes", params={"symbols": "AAPL,MSFT"})
+        resp = await client.get("/api/quotes", params={"symbols": "2330,0050"})
 
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 2
-    assert data[0]["symbol"] == "AAPL"
-    assert data[0]["price"] == 185.50
-    assert data[1]["symbol"] == "MSFT"
+    assert data[0]["symbol"] == "2330"
+    assert data[0]["price"] == 2240.00
+    assert data[1]["symbol"] == "0050"
 
 
 async def test_get_quotes_empty_symbols(client):
@@ -85,23 +95,23 @@ async def test_get_quotes_single_symbol(client):
     """GET /api/quotes works with a single symbol."""
     mock_prov = _mock_provider(quotes_return=[_MOCK_QUOTES[0]])
     with patch("app.services.quote_service.get_price_provider", return_value=mock_prov):
-        resp = await client.get("/api/quotes", params={"symbols": "AAPL"})
+        resp = await client.get("/api/quotes", params={"symbols": "2330"})
 
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
-    assert data[0]["symbol"] == "AAPL"
+    assert data[0]["symbol"] == "2330"
     assert data[0]["market_state"] == "REGULAR"
-    assert data[0]["currency"] == "USD"
+    assert data[0]["currency"] == "TWD"
 
 
 async def test_get_quotes_uppercase_normalization(client):
     """Symbols are normalized to uppercase before fetching."""
     mock_prov = _mock_provider(quotes_return=[_MOCK_QUOTES[0]])
     with patch("app.services.quote_service.get_price_provider", return_value=mock_prov):
-        await client.get("/api/quotes", params={"symbols": "aapl"})
+        await client.get("/api/quotes", params={"symbols": "2330"})
 
-    mock_prov.batch_fetch_quotes.assert_awaited_once_with(["AAPL"])
+    mock_prov.batch_fetch_quotes.assert_awaited_once_with(["2330"])
 
 
 # ── SSE stream tests ─────────────────────────────────────────────────
@@ -127,7 +137,7 @@ async def test_stream_quotes_no_tracked(client):
 
 async def test_stream_quotes_emits_event(client):
     """SSE stream emits quote data for tracked assets."""
-    a = (await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple", "type": "stock"})).json()
+    a = (await client.post("/api/assets", json={"symbol": "2330", "name": "台積電", "type": "stock"})).json()
     groups = (await client.get("/api/groups")).json()
     watchlist_id = next(g["id"] for g in groups if g["is_default"])
     await client.post(f"/api/groups/{watchlist_id}/assets", json={"asset_ids": [a["id"]]})
@@ -144,9 +154,9 @@ async def test_stream_quotes_emits_event(client):
     assert resp.status_code == 200
     events = _parse_sse_events(resp.text)
     assert len(events) >= 1
-    assert "AAPL" in events[0]
-    assert events[0]["AAPL"]["price"] == 185.50
-    assert events[0]["AAPL"]["market_state"] == "REGULAR"
+    assert "2330" in events[0]
+    assert events[0]["2330"]["price"] == 2240.00
+    assert events[0]["2330"]["market_state"] == "REGULAR"
 
 
 async def test_stream_quotes_cache_headers(client):
@@ -164,8 +174,8 @@ async def test_stream_quotes_cache_headers(client):
 
 async def test_stream_quotes_multiple_symbols(client):
     """SSE stream includes all tracked symbols in first event."""
-    a1 = (await client.post("/api/assets", json={"symbol": "AAPL", "name": "Apple", "type": "stock"})).json()
-    a2 = (await client.post("/api/assets", json={"symbol": "MSFT", "name": "Microsoft", "type": "stock"})).json()
+    a1 = (await client.post("/api/assets", json={"symbol": "2330", "name": "台積電", "type": "stock"})).json()
+    a2 = (await client.post("/api/assets", json={"symbol": "0050", "name": "元大台灣50", "type": "etf"})).json()
     groups = (await client.get("/api/groups")).json()
     watchlist_id = next(g["id"] for g in groups if g["is_default"])
     await client.post(f"/api/groups/{watchlist_id}/assets", json={"asset_ids": [a1["id"], a2["id"]]})
@@ -181,5 +191,5 @@ async def test_stream_quotes_multiple_symbols(client):
 
     events = _parse_sse_events(resp.text)
     assert len(events) >= 1
-    assert "AAPL" in events[0]
-    assert "MSFT" in events[0]
+    assert "2330" in events[0]
+    assert "0050" in events[0]

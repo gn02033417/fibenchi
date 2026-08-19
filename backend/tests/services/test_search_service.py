@@ -1,122 +1,70 @@
-"""Unit tests for search_service — DB-backed symbol directory with Yahoo fallback."""
+"""Unit tests for local Taiwan symbol-directory search."""
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.models.symbol_directory import SymbolDirectory
-from app.services.search_service import _parse_yahoo_results, search_symbols
+from app.services.search_service import search_symbols
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
-def _yahoo_response(*items):
-    """Build a Yahoo-style search response with given quote items."""
-    return {"quotes": list(items)}
-
-
-def _equity(symbol: str, name: str = ""):
-    return {"symbol": symbol, "shortname": name, "quoteType": "EQUITY", "exchDisp": "NYSE"}
-
-
-def _etf(symbol: str, name: str = ""):
-    return {"symbol": symbol, "shortname": name, "quoteType": "ETF", "exchDisp": "NYSE Arca"}
-
-
-def _mutual_fund(symbol: str, name: str = ""):
-    return {"symbol": symbol, "shortname": name, "quoteType": "MUTUALFUND", "exchDisp": "NAS"}
-
-
-def test_parse_yahoo_results_filters_non_equity_etf():
-    quotes = [
-        _equity("AAPL", "Apple Inc."),
-        _mutual_fund("VFINX", "Vanguard 500"),
-        _etf("SPY", "SPDR S&P 500"),
-    ]
-    result = _parse_yahoo_results(quotes)
-    assert len(result) == 2
-    symbols = [r["symbol"] for r in result]
-    assert "AAPL" in symbols
-    assert "SPY" in symbols
-    assert "VFINX" not in symbols
-
-
-def test_parse_yahoo_results_caps_at_8():
-    quotes = [_equity(f"SYM{i}", f"Company {i}") for i in range(12)]
-    result = _parse_yahoo_results(quotes)
-    assert len(result) == 8
-
-
-def test_parse_yahoo_results_empty():
-    result = _parse_yahoo_results([])
-    assert result == []
-
-
-@patch("app.services.search_service._upsert_symbols", new_callable=AsyncMock)
-@patch("app.services.search_service.yahoo_client")
-async def test_search_queries_yahoo_when_db_empty(mock_yahoo, mock_upsert, db):
-    mock_yahoo.search = AsyncMock(); mock_yahoo.search.return_value = _yahoo_response(
-        _equity("AAPL", "Apple Inc."),
-        _etf("SPY", "SPDR S&P 500"),
-    )
-
-    result = await search_symbols("apple", db)
-
-    assert len(result) == 2
-    mock_yahoo.search.assert_awaited_once_with("apple", first_quote=False)
-    mock_upsert.assert_awaited_once()
-
-
-@patch("app.services.search_service._upsert_symbols", new_callable=AsyncMock)
-@patch("app.services.search_service.yahoo_client")
-async def test_search_strips_and_lowercases_query(mock_yahoo, mock_upsert, db):
-    mock_yahoo.search = AsyncMock(); mock_yahoo.search.return_value = _yahoo_response(_equity("AAPL", "Apple"))
-
-    await search_symbols("  AAPL  ", db)
-
-    mock_yahoo.search.assert_awaited_once_with("aapl", first_quote=False)
-
-
-@patch("app.services.search_service._upsert_symbols", new_callable=AsyncMock)
-@patch("app.services.search_service.yahoo_client")
-async def test_search_returns_local_when_enough_results(mock_yahoo, mock_upsert, db):
-    # Seed 8+ symbols into the DB
-    for i in range(10):
-        db.add(SymbolDirectory(symbol=f"AAPL{i}", name=f"Apple {i}", exchange="NYSE", type="stock"))
+async def _seed_symbols(db):
+    db.add_all([
+        SymbolDirectory(symbol="2330", name="台積電", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="2330A", name="台積特別股", exchange="TSE", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="12330", name="台積相關商品", exchange="OTC", type="stock", currency="TWD"),
+        SymbolDirectory(symbol="0050", name="元大台灣50", exchange="TSE", type="etf", currency="TWD"),
+        SymbolDirectory(symbol="9000", name="停牌台積電", exchange="TSE", type="stock", currency="TWD", active=False),
+        SymbolDirectory(symbol="US01", name="Overseas", exchange="NASDAQ", type="stock", currency="USD"),
+        SymbolDirectory(symbol="7777", name="未知商品", exchange="TSE", type="unknown", currency="TWD"),
+    ])
     await db.commit()
 
-    result = await search_symbols("aapl", db)
 
-    assert len(result) >= 8
-    mock_yahoo.search.assert_not_called()  # Should not call Yahoo when local has enough
+async def test_search_supports_exact_prefix_and_substring_code_matching(db):
+    await _seed_symbols(db)
 
+    result = await search_symbols("2330", db)
 
-@patch("app.services.search_service._upsert_symbols", new_callable=AsyncMock)
-@patch("app.services.search_service.yahoo_client")
-async def test_search_falls_back_to_yahoo_when_few_local(mock_yahoo, mock_upsert, db):
-    # Seed only 2 symbols
-    db.add(SymbolDirectory(symbol="AAPL", name="Apple Inc.", exchange="NYSE", type="stock"))
-    db.add(SymbolDirectory(symbol="AAPLX", name="Apple Extra", exchange="NYSE", type="stock"))
-    await db.commit()
-
-    mock_yahoo.search = AsyncMock(); mock_yahoo.search.return_value = _yahoo_response(
-        _equity("AAPL", "Apple Inc."),
-        _equity("AAPL2", "Apple 2"),
-    )
-
-    result = await search_symbols("aapl", db)
-
-    mock_yahoo.search.assert_awaited_once()
-    assert len(result) == 2  # Yahoo results take priority
+    assert [row["symbol"] for row in result] == ["2330", "2330A", "12330"]
+    assert all(row["exchange"] in {"TSE", "OTC"} for row in result)
 
 
-@patch("app.services.search_service._upsert_symbols", new_callable=AsyncMock)
-@patch("app.services.search_service.yahoo_client")
-async def test_search_returns_empty_when_no_matches(mock_yahoo, mock_upsert, db):
-    mock_yahoo.search = AsyncMock(); mock_yahoo.search.return_value = _yahoo_response(
-        _mutual_fund("VFINX", "Vanguard 500"),
-    )
+async def test_search_supports_chinese_name_matching(db):
+    await _seed_symbols(db)
 
-    result = await search_symbols("vanguard", db)
+    result = await search_symbols("台積", db)
 
-    assert result == []
+    assert [row["symbol"] for row in result] == ["12330", "2330", "2330A"]
+
+
+async def test_search_excludes_inactive_unsupported_and_non_taiwan_rows(db):
+    await _seed_symbols(db)
+
+    result = await search_symbols("台", db)
+
+    symbols = [row["symbol"] for row in result]
+    assert symbols == ["12330", "2330", "2330A", "0050"]
+    assert "9000" not in symbols
+    assert "US01" not in symbols
+    assert "7777" not in symbols
+
+
+async def test_search_does_not_call_yahoo_or_shioaji(db):
+    await _seed_symbols(db)
+
+    with (
+        patch("app.services.yahoo.yahoo_client.search", new_callable=AsyncMock) as yahoo_search,
+        patch("app.services.shioaji.client.ShioajiClient.list_contracts", new_callable=AsyncMock) as list_contracts,
+    ):
+        result = await search_symbols("2330", db)
+
+    assert result[0]["symbol"] == "2330"
+    yahoo_search.assert_not_awaited()
+    list_contracts.assert_not_awaited()
+
+
+async def test_search_returns_empty_for_blank_query(db):
+    assert await search_symbols("   ", db) == []

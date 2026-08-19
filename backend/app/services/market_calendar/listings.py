@@ -85,6 +85,13 @@ SUFFIX_LISTINGS: dict[str, Listing] = {
     "BO": Listing("XBOM", "INR"),   # BSE India
 }
 
+# Stored Taiwan assets carry verified exchange metadata instead of a Yahoo
+# suffix. Both supported venues share the XTAI calendar and TWD quotation.
+EXCHANGE_LISTINGS: dict[str, Listing] = {
+    "TSE": Listing("XTAI", "TWD"),
+    "OTC": Listing("XTAI", "TWD"),
+}
+
 # Common Yahoo index symbols → calendar of the venue they track.
 INDEX_CALENDARS: dict[str, str] = {
     "^AEX": "XAMS",

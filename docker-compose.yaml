@@ -15,11 +15,24 @@ services:
       timeout: 5s
       retries: 5
 
+  shioaji:
+    image: sinotrade/shioaji:1.7.0
+    entrypoint: ["shioaji"]
+    command: ["server", "start", "--no-open"]
+    environment:
+      SJ_API_KEY: ${SJ_API_KEY:-}
+      SJ_SEC_KEY: ${SJ_SEC_KEY:-}
+      SJ_PRODUCTION: ${SJ_PRODUCTION:-false}
+    expose:
+      - "8080"
+
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+asyncpg://fibenchi:fibenchi@db:5432/fibenchi
       REFRESH_CRON: ${REFRESH_CRON:-0 23 * * *}
+      SHIOAJI_BASE_URL: ${SHIOAJI_BASE_URL:-http://shioaji:8080}
+      SHIOAJI_TIMEOUT_SECONDS: ${SHIOAJI_TIMEOUT_SECONDS:-5}
     ports:
       - "18000:8000"
     volumes:
@@ -27,6 +40,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      shioaji:
+        condition: service_started
 
   frontend:
     build:

@@ -14,13 +14,13 @@ from app.models import (
     group_assets,
     pseudo_etf_constituents,
 )
+from app.models.symbol_directory import TAIWAN_EXCHANGES
 from app.repositories.asset_repo import AssetRepository
 from app.repositories.group_repo import GroupRepository
 from app.schemas.asset import AssetAttachments
 from app.services.asset_suggestion import reset_detection, suggest_for
 from app.services.currency_service import ensure_currency
 from app.services.entity_lookups import get_asset
-from app.services.yahoo import yahoo_client
 
 
 async def list_assets(db: AsyncSession):
@@ -33,46 +33,51 @@ async def create_asset(
     name: str | None,
     asset_type: AssetType | None = None,
 ):
-    """Create an asset row. Group attachment is the caller's responsibility —
-    use ``POST /api/groups/{id}/assets`` afterwards to put it in a group
-    (Watchlist or otherwise).
+    """Create an asset from an active, supported Taiwan directory row.
 
-    ``asset_type`` None means "you decide" and is recorded as AUTO; an
-    explicit value is a human's call and is recorded as USER, which keeps
-    later suggestions quiet about it. The two were indistinguishable while
-    the schema defaulted to STOCK.
+    The symbol directory is authoritative for the display name, exchange,
+    stock/ETF type and currency. ``asset_type`` remains in the service
+    signature for API compatibility, but directory metadata cannot be
+    overridden during creation.
     """
     repo = AssetRepository(db)
-    symbol = symbol.upper()
+    symbol = symbol.strip().upper()
+
+    directory = await repo.find_directory_by_symbol(symbol)
+    if directory is None:
+        raise HTTPException(
+            404,
+            f"Symbol {symbol} is not present in the Taiwan symbol directory",
+        )
+    if not directory.active:
+        raise HTTPException(
+            404,
+            f"Symbol {symbol} is inactive in the Taiwan symbol directory",
+        )
+
+    directory_type = (directory.type or "").lower()
+    if directory.exchange not in TAIWAN_EXCHANGES or directory_type not in {"stock", "etf"}:
+        raise HTTPException(
+            404,
+            f"Symbol {symbol} is not a supported Taiwan stock or ETF directory entry",
+        )
 
     existing = await repo.find_by_symbol(symbol)
     if existing:
         return existing
 
-    ref = AssetRef(symbol)
+    ref = AssetRef(symbol, exchange=directory.exchange, currency="TWD")
     suggestion = suggest_for(ref)
-    info = await yahoo_client.validate(symbol)
-    if not info:
-        if not name:
-            raise HTTPException(404, f"Symbol {symbol} not found on Yahoo Finance")
-        currency = ref.currency or "USD"
-        detected = suggestion.type
-    else:
-        currency = info.get("currency_code") or info.get("currency", "USD")
-        if not name:
-            name = info["name"]
-        # Yahoo owns the ETF/stock call — shape can't see that distinction —
-        # but shape owns index-ness, because quoteType is a live lookup frozen
-        # into the row and it has already been wrong (see migration 0020).
-        detected = AssetType.ETF if info["type"] == "ETF" else suggestion.type
+    detected = AssetType.ETF if directory_type == "etf" else AssetType.STOCK
 
-    await ensure_currency(db, currency)
+    await ensure_currency(db, "TWD")
     return await repo.create(
         symbol=symbol,
-        name=name,
-        type=asset_type or detected,
-        type_source=FieldSource.AUTO if asset_type is None else FieldSource.USER,
-        currency=currency,
+        name=directory.name,
+        type=detected,
+        type_source=FieldSource.AUTO,
+        exchange=directory.exchange,
+        currency="TWD",
         unit_kind=suggestion.unit_kind,
         unit_source=FieldSource.AUTO,
     )

@@ -9,10 +9,10 @@ router = APIRouter(prefix="/api", tags=["quotes"])
 
 @router.get("/quotes", response_model=list[QuoteResponse], summary="Get real-time quotes for symbols")
 async def get_quotes(symbols: str = Query(..., description="Comma-separated list of symbols")):
-    """Fetch latest market quotes for one or more symbols via Yahoo Finance.
+    """Fetch latest Taiwan market snapshots for one or more symbols.
 
     Pass a comma-separated list of ticker symbols (e.g. `AAPL,MSFT,GOOGL`).
-    Returns price, previous close, change, change percent, currency, and market state.
+    Returns normalized price, freshness status, timestamp, and market fields.
     """
     return await quote_service.get_quotes(symbols)
 

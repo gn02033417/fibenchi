@@ -45,32 +45,6 @@ _SEED_CURRENCIES = [
 
 
 @pytest.fixture(autouse=True)
-def mock_yahoo_validate(monkeypatch):
-    """Prevent real Yahoo Finance calls during tests.
-
-    Rebinds the ``yahoo_client`` name in ``asset_service`` to a mock with
-    a deterministic ``validate`` response. Other modules keep their own
-    reference to the real singleton, so tests that exercise
-    ``yahoo_client`` directly (e.g. ``test_yahoo_validation.py``) are
-    unaffected.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    async def fake_validate(symbol):
-        return {
-            "symbol": symbol.upper(),
-            "name": f"{symbol.upper()} Inc.",
-            "type": "EQUITY",
-            "currency": "USD",
-            "currency_code": "USD",
-        }
-
-    mock = MagicMock()
-    mock.validate = AsyncMock(side_effect=fake_validate)
-    monkeypatch.setattr("app.services.asset_service.yahoo_client", mock)
-
-
-@pytest.fixture(autouse=True)
 def reset_yahoo_throttle():
     """Disable inter-call spacing and clear breaker state between tests.
 

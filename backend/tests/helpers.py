@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from app.models import Asset, AssetType, PriceHistory
+from app.models.symbol_directory import SymbolDirectory
 from app.repositories.group_repo import GroupRepository
 
 
@@ -34,8 +35,24 @@ async def create_asset_via_api(
     return asset
 
 
+async def seed_taiwan_directory(db, rows: list[dict[str, object]]) -> None:
+    """Seed verified Taiwan directory rows for API integration fixtures."""
+    db.add_all(
+        SymbolDirectory(
+            symbol=str(row["symbol"]),
+            name=str(row["name"]),
+            exchange=str(row.get("exchange", "TSE")),
+            type=str(row.get("type", "stock")),
+            currency="TWD",
+            active=True,
+        )
+        for row in rows
+    )
+    await db.commit()
+
+
 async def seed_asset_with_prices(
-    db, symbol: str = "AAPL", name: str | None = None, n_days: int = 500,
+    db, symbol: str = "AAPL", name: str | None = None, n_days: int = 700,
     base_price: float = 150.0, add_to_group: bool = True,
 ) -> Asset:
     """Create an asset with n_days of realistic price data.

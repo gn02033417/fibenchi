@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain import AssetRef
 from app.models import Asset
 from app.models.group import group_assets
+from app.models.symbol_directory import SymbolDirectory
 
 
 class AssetRepository:
@@ -13,6 +14,15 @@ class AssetRepository:
     async def find_by_symbol(self, symbol: str) -> Asset | None:
         result = await self.db.execute(
             select(Asset).where(Asset.symbol == symbol.upper())
+        )
+        return result.scalar_one_or_none()
+
+    async def find_directory_by_symbol(self, symbol: str) -> SymbolDirectory | None:
+        """Return the local directory row for a raw Taiwan symbol."""
+        result = await self.db.execute(
+            select(SymbolDirectory).where(
+                SymbolDirectory.symbol == symbol.strip().upper()
+            )
         )
         return result.scalar_one_or_none()
 
@@ -36,10 +46,13 @@ class AssetRepository:
     async def list_in_any_group_refs(self) -> list[AssetRef]:
         """Return an :class:`AssetRef` per asset in at least one group."""
         result = await self.db.execute(
-            select(Asset.id, Asset.symbol)
+            select(Asset.id, Asset.symbol, Asset.exchange, Asset.currency)
             .where(exists().where(group_assets.c.asset_id == Asset.id))
         )
-        return [AssetRef(sym, aid) for aid, sym in result.all()]
+        return [
+            AssetRef(sym, aid, exchange=exchange, currency=currency)
+            for aid, sym, exchange, currency in result.all()
+        ]
 
     async def list_in_any_group_symbols(self) -> list[str]:
         """Return symbols for all assets in at least one group."""
@@ -52,11 +65,14 @@ class AssetRepository:
     async def list_in_group_refs(self, group_id: int) -> list[AssetRef]:
         """Return an :class:`AssetRef` per asset in a specific group."""
         result = await self.db.execute(
-            select(Asset.id, Asset.symbol)
+            select(Asset.id, Asset.symbol, Asset.exchange, Asset.currency)
             .join(group_assets, Asset.id == group_assets.c.asset_id)
             .where(group_assets.c.group_id == group_id)
         )
-        return [AssetRef(sym, aid) for aid, sym in result.all()]
+        return [
+            AssetRef(sym, aid, exchange=exchange, currency=currency)
+            for aid, sym, exchange, currency in result.all()
+        ]
 
     async def list_refs_by_symbols(self, symbols: list[str]) -> list[AssetRef]:
         """Return an :class:`AssetRef` per given symbol (tracked assets only).
@@ -68,9 +84,14 @@ class AssetRepository:
             return []
         upper = [s.upper() for s in symbols]
         result = await self.db.execute(
-            select(Asset.id, Asset.symbol).where(Asset.symbol.in_(upper))
+            select(Asset.id, Asset.symbol, Asset.exchange, Asset.currency).where(
+                Asset.symbol.in_(upper)
+            )
         )
-        return [AssetRef(sym, aid) for aid, sym in result.all()]
+        return [
+            AssetRef(sym, aid, exchange=exchange, currency=currency)
+            for aid, sym, exchange, currency in result.all()
+        ]
 
     async def list_all(self) -> list[Asset]:
         result = await self.db.execute(select(Asset).order_by(Asset.symbol))

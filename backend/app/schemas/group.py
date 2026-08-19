@@ -31,6 +31,7 @@ class GroupResponse(BaseModel):
     description: str | None = Field(description="Group description")
     icon: str | None = Field(description="Lucide icon name")
     is_default: bool = Field(description="Whether this is the protected default group (Watchlist)")
+    realtime_priority: bool = Field(default=False, description="Whether assets in this group receive realtime priority")
     position: int = Field(description="Display order position (0 = first)")
     created_at: datetime.datetime = Field(description="Creation timestamp")
     assets: list[AssetResponse] = Field(default=[], description="Assets in this group")

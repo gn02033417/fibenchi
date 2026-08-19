@@ -20,6 +20,7 @@ class TestRegistry:
             "price_refresh",
             "price_refresh_supplemental",
             "symbol_directory_sync",
+            "taiwan_symbol_directory_sync",
             "intraday_sync",
             "price_heal",
         }

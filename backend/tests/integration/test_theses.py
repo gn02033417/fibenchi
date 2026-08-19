@@ -5,9 +5,17 @@ from datetime import date
 import pytest
 
 from app.models import Asset, AssetType, PriceHistory
-from tests.helpers import create_asset_via_api
+from tests.helpers import create_asset_via_api, seed_taiwan_directory
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
+
+
+@pytest.fixture(autouse=True)
+async def _seed_directory(db):
+    await seed_taiwan_directory(db, [
+        {"symbol": "2331", "name": "測試股票一"},
+        {"symbol": "2332", "name": "測試股票二"},
+    ])
 
 
 async def _seed_asset_with_closes(db, symbol: str, closes: dict[date, float]) -> Asset:
@@ -85,7 +93,7 @@ async def test_update_to_duplicate_name_rejected(client):
 
 
 async def test_add_nonexistent_asset_rejected(client):
-    coco = await create_asset_via_api(client, "COCO.L", "Cocoa")
+    coco = await create_asset_via_api(client, "2331", "測試股票一")
     tid = (await client.post("/api/theses", json={"name": "El Niño"})).json()["id"]
     resp = await client.post(f"/api/theses/{tid}/assets", json={"asset_ids": [coco["id"], 999999]})
     assert resp.status_code == 404
@@ -105,13 +113,13 @@ async def test_get_nonexistent_404(client):
 
 
 async def test_add_and_remove_members(client):
-    coco = await create_asset_via_api(client, "COCO.L", "Cocoa")
-    ecaf = await create_asset_via_api(client, "ECAF.L", "Coffee")
+    coco = await create_asset_via_api(client, "2331", "測試股票一")
+    ecaf = await create_asset_via_api(client, "2332", "測試股票二")
     tid = (await client.post("/api/theses", json={"name": "El Niño"})).json()["id"]
 
     resp = await client.post(f"/api/theses/{tid}/assets", json={"asset_ids": [coco["id"], ecaf["id"]]})
     assert resp.status_code == 200
-    assert {a["symbol"] for a in resp.json()["assets"]} == {"COCO.L", "ECAF.L"}
+    assert {a["symbol"] for a in resp.json()["assets"]} == {"2331", "2332"}
 
     # idempotent re-add does not duplicate
     resp = await client.post(f"/api/theses/{tid}/assets", json={"asset_ids": [coco["id"]]})
@@ -120,7 +128,7 @@ async def test_add_and_remove_members(client):
     # remove one
     resp = await client.delete(f"/api/theses/{tid}/assets/{coco['id']}")
     assert resp.status_code == 200
-    assert {a["symbol"] for a in resp.json()["assets"]} == {"ECAF.L"}
+    assert {a["symbol"] for a in resp.json()["assets"]} == {"2332"}
 
 
 async def test_members_returned_as_full_assets(client, db):
@@ -145,7 +153,7 @@ async def test_members_returned_as_full_assets(client, db):
 
 
 async def test_asset_in_multiple_theses(client):
-    coco = await create_asset_via_api(client, "COCO.L", "Cocoa")
+    coco = await create_asset_via_api(client, "2331", "測試股票一")
     t1 = (await client.post("/api/theses", json={"name": "El Niño"})).json()["id"]
     t2 = (await client.post("/api/theses", json={"name": "Softs"})).json()["id"]
 
@@ -154,7 +162,7 @@ async def test_asset_in_multiple_theses(client):
 
     for tid in (t1, t2):
         body = (await client.get(f"/api/theses/{tid}")).json()
-        assert any(a["symbol"] == "COCO.L" for a in body["assets"])
+        assert any(a["symbol"] == "2331" for a in body["assets"])
 
 
 async def test_aggregate_pct_null_without_members(client):
