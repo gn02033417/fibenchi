@@ -85,7 +85,42 @@ async def test_fetch_symbols_is_offline_when_http_is_mocked(monkeypatch):
     assert client.requested_urls == ["https://fixture/stocks", "https://fixture/etfs"]
 
 
+@pytest.mark.asyncio
+async def test_fetch_symbols_rejects_empty_etf_snapshot(monkeypatch):
+    class MockResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    class MockClient:
+        async def get(self, url):
+            return MockResponse(
+                json.dumps(_load_json_fixture("stocks.json"), ensure_ascii=False)
+                if url.endswith("stocks")
+                else "<html></html>"
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "app.services.symbol_providers.tpex.httpx.AsyncClient",
+        lambda **kwargs: MockClient(),
+    )
+
+    with pytest.raises(RuntimeError, match="ETF"):
+        await TPEXProvider().fetch_symbols(
+            {"stocks_url": "https://fixture/stocks", "etfs_url": "https://fixture/etfs"}
+        )
+
+
 def test_tpex_provider_is_registered():
     assert isinstance(get_provider("tpex"), TPEXProvider)
     providers = get_available_providers()
     assert providers["tpex"]["markets"] == [{"key": "otc", "label": "Taipei Exchange (OTC)"}]
+

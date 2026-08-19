@@ -139,3 +139,33 @@ Discoveries:
 - Sidecar failures and missing snapshots return deterministic TWD `DISCONNECTED` placeholders without Yahoo fallback.
 - Existing integration fixtures that create assets now seed Taiwan directory rows; local seeded bars cover the existing indicator warmup so tests do not invoke the not-yet-implemented TW-11 history seam.
 - No historical queue/Kbars implementation, live SSE/subscription path, or other TW-11 scope was added.
+
+## Post-Goal Merge Gate
+Status: PARTIAL — TW-00 through TW-10 review/code gates are closed locally; Docker/PostgreSQL and GitHub Actions execution gates remain environment-blocked.
+Scope:
+- No TW-11+ source, ticket, or redesign was added.
+
+Review findings fixed:
+- `0022_normalize_taiwan_symbols` now writes `TSE` for `.TW` and `OTC` for `.TWO` while normalizing both `assets` and `symbol_directory`.
+- `SymbolDirectory` reconciliation now keys existing and incoming rows by the database-global `symbol` key, updating exchange metadata without creating a duplicate row.
+- TWSE and TPEx providers now reject an empty/unusable stock or ETF snapshot before directory reconciliation, preventing partial snapshots from deactivating the missing class.
+- Both Compose files now use the official `sinotrade/shioaji-server:1.7.0` image and explicitly pass `SJ_HTTP_ADDR=0.0.0.0:8080`; backend remains on `http://shioaji:8080`.
+
+Verification:
+- Backend full suite: `876 passed, 751 warnings`.
+- Backend Ruff: `ruff check .` passed.
+- Frontend direct binaries: ESLint passed; TypeScript/Vite build passed; Vitest `7 files / 50 tests` passed.
+- Compose YAML/static topology assertions passed for both `docker-compose.yaml` and `docker-compose.prod.yaml`.
+- `uv tool run --from shioaji==1.7.0 shioaji server start --help` and `shioaji tree --all` passed. The pinned CLI exposes no host/bind option; the official v1.7.0 server image supplies `SJ_HTTP_ADDR=0.0.0.0:8080`.
+- A no-credential server probe failed deterministically before HTTP startup with `api_key must be at least 10 characters, got 0`; no credentials were used or stored.
+
+Remaining gates:
+- Docker/Podman/containerd are unavailable on this machine, so image pull, container lifecycle, Compose startup, and backend-to-sidecar `/api/v1/health`, `/api/v1/info`, `/api/v1/stream/status` calls were not runtime-verified.
+- No local PostgreSQL client or listener is available. A clean SQLite migration probe stopped at pre-existing PostgreSQL-only migration `0008` (`ALTER TABLE ... ALTER COLUMN ... TYPE`); full clean PostgreSQL migration through `0022` is therefore not claimed. The focused 0021/0022 migration tests pass.
+- GitHub Actions workflow `ci.yaml` contains the expected `pull_request` targets `main`/`dev`, but the remote PR head has zero workflow runs and zero commit statuses. The public Actions page reports `0 workflow runs`; no connector operation is available to dispatch a run or change repository Actions settings.
+- `pnpm run lint` is blocked before the script by the Codex runtime's automatic install check (`ERR_PNPM_IGNORED_BUILDS` for `esbuild` and `msw`). The generated `frontend/pnpm-workspace.yaml` was removed; direct existing binaries passed the equivalent lint/build/test checks above.
+
+Remote state:
+- PR #1 remains open against `dev`; review findings were fixed in the local checkout.
+- Native HTTPS/SSH push authentication remains unavailable, so the connector mirror history is retained and must be updated through the existing PR head without force-pushing.
+

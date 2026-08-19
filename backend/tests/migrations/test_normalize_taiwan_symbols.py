@@ -142,19 +142,21 @@ def test_0022_alembic_migration_updates_rows_in_place():
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("symbol", sa.String(20), unique=True, nullable=False),
+        sa.Column("exchange", sa.String(20), nullable=True),
     )
     directory = sa.Table(
         "symbol_directory",
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("symbol", sa.String(20), unique=True, nullable=False),
+        sa.Column("exchange", sa.String(20), nullable=True),
     )
     metadata.create_all(engine)
 
     with engine.begin() as connection:
-        connection.execute(assets.insert().values(id=10, symbol="6488.TWO"))
+        connection.execute(assets.insert().values(id=10, symbol="6488.TWO", exchange=None))
         connection.execute(assets.insert().values(id=11, symbol="NVDA"))
-        connection.execute(directory.insert().values(id=20, symbol="6488.TWO"))
+        connection.execute(directory.insert().values(id=20, symbol="6488.TWO", exchange=None))
 
         migration = _load_0022_revision()
         context = MigrationContext.configure(connection)
@@ -168,5 +170,11 @@ def test_0022_alembic_migration_updates_rows_in_place():
 
         asset_rows = connection.execute(sa.select(assets).order_by(assets.c.id)).mappings().all()
         directory_rows = connection.execute(sa.select(directory)).mappings().all()
-        assert [(row["id"], row["symbol"]) for row in asset_rows] == [(10, "6488"), (11, "NVDA")]
-        assert [(row["id"], row["symbol"]) for row in directory_rows] == [(20, "6488")]
+        assert [(row["id"], row["symbol"], row["exchange"]) for row in asset_rows] == [
+            (10, "6488", "OTC"),
+            (11, "NVDA", None),
+        ]
+        assert [(row["id"], row["symbol"], row["exchange"]) for row in directory_rows] == [
+            (20, "6488", "OTC"),
+        ]
+

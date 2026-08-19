@@ -112,6 +112,35 @@ async def test_sync_is_idempotent_and_does_not_duplicate_directory_rows(db):
 
 
 @pytest.mark.asyncio
+async def test_reconciles_existing_symbol_when_exchange_metadata_changes(db):
+    existing = SymbolDirectory(
+        symbol="2330",
+        name="舊名稱",
+        exchange="OTC",
+        type="stock",
+        currency="TWD",
+        active=True,
+    )
+    db.add(existing)
+    await db.commit()
+    existing_id = existing.id
+
+    result = await sync_taiwan_symbol_directory(
+        db,
+        twse_provider=FakeProvider(_entries()[:1]),
+        tpex_provider=FakeProvider(_entries()[2:]),
+        contract_adapter=FakeContractAdapter(_contracts()),
+        now=datetime(2026, 8, 19, 9, 0),
+    )
+
+    assert result.status == "success"
+    rows = await _rows(db)
+    assert ("2330", "OTC") not in rows
+    assert rows[("2330", "TSE")].id == existing_id
+    assert rows[("2330", "TSE")].active is True
+
+
+@pytest.mark.asyncio
 async def test_failed_refresh_preserves_last_known_good_rows(db):
     before_now = datetime(2026, 8, 19, 9, 0, 0)
     await sync_taiwan_symbol_directory(
@@ -151,3 +180,4 @@ def test_daily_taiwan_sync_is_registered_without_replacing_existing_jobs():
     assert "symbol_directory_sync" in tasks
     assert "taiwan_symbol_directory_sync" in tasks
     assert isinstance(tasks["taiwan_symbol_directory_sync"].resolve_trigger(), CronTrigger)
+

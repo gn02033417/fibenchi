@@ -312,7 +312,11 @@ class TPEXProvider(SymbolProvider):
             etfs_response.raise_for_status()
 
         stocks = parse_tpex_stocks(stocks_response.text)
+        if not stocks:
+            raise RuntimeError("TPEx stock reference source returned no usable symbols")
         etfs = parse_tpex_etfs(etfs_response.text)
+        if not etfs:
+            raise RuntimeError("TPEx ETF reference source returned no usable symbols")
         results = stocks + etfs
         logger.info(
             "TPEx provider fetched %d symbols (%d stocks, %d ETFs)",
@@ -330,3 +334,4 @@ class TPEXProvider(SymbolProvider):
 # Keep both spellings available: TPEx is the exchange's official branding,
 # while TPEX matches the module/provider key convention used by this package.
 TPExProvider = TPEXProvider
+

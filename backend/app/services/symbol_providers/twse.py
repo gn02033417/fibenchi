@@ -165,7 +165,11 @@ class TWSEProvider(SymbolProvider):
             etfs_response.raise_for_status()
 
         stocks = parse_twse_stocks(json.loads(stocks_response.text))
+        if not stocks:
+            raise RuntimeError("TWSE stock reference source returned no usable symbols")
         etfs = parse_twse_etfs(json.loads(etfs_response.text))
+        if not etfs:
+            raise RuntimeError("TWSE ETF reference source returned no usable symbols")
         results = stocks + etfs
         logger.info(
             "TWSE provider fetched %d symbols (%d stocks, %d ETFs)",
@@ -178,3 +182,4 @@ class TWSEProvider(SymbolProvider):
     @staticmethod
     def available_markets() -> list[dict]:
         return [{"key": "tse", "label": "Taiwan Stock Exchange (TSE)"}]
+

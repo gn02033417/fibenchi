@@ -31,19 +31,30 @@ def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-def _reference_entries(entries: list[SymbolEntry]) -> dict[tuple[str, str], SymbolEntry]:
-    result: dict[tuple[str, str], SymbolEntry] = {}
+def _reference_entries(entries: list[SymbolEntry]) -> dict[str, SymbolEntry]:
+    result: dict[str, SymbolEntry] = {}
     for entry in entries:
         symbol = entry.symbol.strip()
         exchange = entry.exchange.strip().upper()
         if not symbol or exchange not in TAIWAN_EXCHANGES:
             continue
-        result[(symbol, exchange)] = entry
+        previous = result.get(symbol)
+        if previous is not None and previous.exchange.strip().upper() != exchange:
+            raise RuntimeError(f"Taiwan reference sources disagree on exchange for {symbol}")
+        result[symbol] = entry
     return result
 
 
-def _contract_entries(contracts: list[TaiwanContract]) -> dict[tuple[str, str], TaiwanContract]:
-    return {(contract.code.strip(), contract.exchange.strip().upper()): contract for contract in contracts}
+def _contract_entries(contracts: list[TaiwanContract]) -> dict[str, TaiwanContract]:
+    result: dict[str, TaiwanContract] = {}
+    for contract in contracts:
+        symbol = contract.code.strip()
+        exchange = contract.exchange.strip().upper()
+        previous = result.get(symbol)
+        if previous is not None and previous.exchange.strip().upper() != exchange:
+            raise RuntimeError(f"Shioaji contracts disagree on exchange for {symbol}")
+        result[symbol] = contract
+    return result
 
 
 async def sync_taiwan_symbol_directory(
@@ -78,21 +89,28 @@ async def sync_taiwan_symbol_directory(
         logger.exception("Taiwan symbol directory refresh failed")
         return TaiwanSymbolDirectorySyncResult(status="failed", error=str(exc))
 
-    merged_keys = set(reference) | set(contract_map)
+    merged_symbols = set(reference) | set(contract_map)
     active_count = 0
 
     try:
         existing_result = await db.execute(select(SymbolDirectory))
-        existing = {(row.symbol, row.exchange): row for row in existing_result.scalars().all()}
+        existing = {row.symbol: row for row in existing_result.scalars().all()}
 
-        for key in sorted(merged_keys):
-            symbol, exchange = key
-            reference_entry = reference.get(key)
-            contract_entry = contract_map.get(key)
-            row = existing.get(key)
+        for symbol in sorted(merged_symbols):
+            reference_entry = reference.get(symbol)
+            contract_entry = contract_map.get(symbol)
+            exchange = (
+                reference_entry.exchange
+                if reference_entry is not None
+                else contract_entry.exchange
+            ).strip().upper()
+            row = existing.get(symbol)
             if row is None:
                 row = SymbolDirectory(symbol=symbol, name=symbol, exchange=exchange)
                 db.add(row)
+                existing[symbol] = row
+            else:
+                row.exchange = exchange
 
             if reference_entry is not None:
                 row.name = reference_entry.name
@@ -112,8 +130,8 @@ async def sync_taiwan_symbol_directory(
             if row.active:
                 active_count += 1
 
-        for key, row in existing.items():
-            if row.is_taiwan and key not in merged_keys:
+        for symbol, row in existing.items():
+            if row.is_taiwan and symbol not in merged_symbols:
                 row.active = False
 
         await db.commit()
@@ -127,5 +145,6 @@ async def sync_taiwan_symbol_directory(
         reference_count=len(reference),
         contract_count=len(contract_map),
         active_count=active_count,
-        inactive_count=len(merged_keys) - active_count,
+        inactive_count=len(merged_symbols) - active_count,
     )
+

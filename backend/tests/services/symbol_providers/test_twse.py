@@ -81,7 +81,38 @@ async def test_fetch_symbols_is_offline_when_http_is_mocked(monkeypatch):
     assert client.requested_urls == ["https://fixture/stocks", "https://fixture/etfs"]
 
 
+@pytest.mark.asyncio
+async def test_fetch_symbols_rejects_empty_etf_snapshot(monkeypatch):
+    class MockResponse:
+        def __init__(self, payload):
+            self.text = json.dumps(payload, ensure_ascii=False)
+
+        def raise_for_status(self):
+            pass
+
+    class MockClient:
+        async def get(self, url):
+            return MockResponse(_load_fixture("stocks.json") if url.endswith("stocks") else [])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "app.services.symbol_providers.twse.httpx.AsyncClient",
+        lambda **kwargs: MockClient(),
+    )
+
+    with pytest.raises(RuntimeError, match="ETF"):
+        await TWSEProvider().fetch_symbols(
+            {"stocks_url": "https://fixture/stocks", "etfs_url": "https://fixture/etfs"}
+        )
+
+
 def test_twse_provider_is_registered():
     assert isinstance(get_provider("twse"), TWSEProvider)
     providers = get_available_providers()
     assert providers["twse"]["markets"] == [{"key": "tse", "label": "Taiwan Stock Exchange (TSE)"}]
+

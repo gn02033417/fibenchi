@@ -16,13 +16,14 @@ services:
       retries: 5
 
   shioaji:
-    image: sinotrade/shioaji:1.7.0
+    image: sinotrade/shioaji-server:1.7.0
     entrypoint: ["shioaji"]
     command: ["server", "start", "--no-open"]
     environment:
       SJ_API_KEY: ${SJ_API_KEY:-}
       SJ_SEC_KEY: ${SJ_SEC_KEY:-}
       SJ_PRODUCTION: ${SJ_PRODUCTION:-false}
+      SJ_HTTP_ADDR: ${SJ_HTTP_ADDR:-0.0.0.0:8080}
     expose:
       - "8080"
 
@@ -58,3 +59,4 @@ services:
 volumes:
   pgdata:
   frontend_node_modules:
+
