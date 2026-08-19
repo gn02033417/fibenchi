@@ -159,7 +159,7 @@ Verification:
 - `uv tool run --from shioaji==1.7.0 shioaji server start --help` and `shioaji tree --all` passed. The pinned CLI exposes no host/bind option; the official v1.7.0 server image supplies `SJ_HTTP_ADDR=0.0.0.0:8080`.
 - The official v1.7.0 `Dockerfile-server` confirms `ENV SJ_HTTP_ADDR=0.0.0.0:8080`, `EXPOSE 8080`, and a persistent `shioaji server start --no-open` entrypoint. Both Compose files use that image and keep backend-to-sidecar traffic on `http://shioaji:8080`.
 - No-credential and fake-key server probes fail deterministically at authentication before HTTP startup (`api_key must be at least 10 characters, got 0`; invalid/nonexistent key errors); no real credentials were used or stored.
-- GitHub Actions run `32265487324` / run #4 passed: `test-backend` (Ruff, clean PostgreSQL migration, contract sync, pytest, pip-audit) and `test-frontend` (pnpm install, lint, build, test, audit) succeeded; `build-image` was correctly skipped for the PR event.
+- GitHub Actions runs `32265487324` / #4 and `32265844893` / #5 passed: `test-backend` (Ruff, clean PostgreSQL migration, contract sync, pytest, pip-audit) and `test-frontend` (pnpm install, lint, build, test, audit) succeeded; `build-image` was correctly skipped for the PR event.
 - The clean PostgreSQL gate reached Alembic head `0022` and read back `exchange` columns on both `assets` and `symbol_directory`. The gate exposed the pre-existing PostgreSQL enum transaction defect; `0012` and `0013` now use Alembic `autocommit_block()` so `INDEX` is committed before later migrations use it.
 
 Remaining gates:
@@ -168,4 +168,4 @@ Remaining gates:
 
 Remote state:
 - PR #1 remains open against `dev`; no new PR was created and the three review findings remain fixed in the source.
-- Native HTTPS/SSH push authentication remains unavailable. The existing connector mirror branch was safely fast-forwarded to `18312cd5c751d2ad6490fb400a98afddcfbbccfd`; local ticket-level history remains in the checkout, including `fc89d59` for the migration gate fix.
+- Native HTTPS/SSH push authentication remains unavailable. The existing connector mirror branch was safely fast-forwarded through migration commit `18312cd5c751d2ad6490fb400a98afddcfbbccfd` and evidence commit `af3807ed12da721f2baf4ca85e524f4c26860495`; local ticket-level history remains in the checkout, including `fc89d59` for the migration gate fix.
