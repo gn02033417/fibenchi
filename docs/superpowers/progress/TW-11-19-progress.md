@@ -53,3 +53,21 @@ Discoveries:
 - `SHIOAJI_MAX_SUBSCRIPTIONS` defaults to 180 and is validated at configuration load time with a hard upper bound of 200.
 - `compute_wanted_symbols(...)` is a pure, deterministic demand seam: active asset, realtime-priority groups, active group, recent symbols, then remaining tracked symbols; duplicate symbols always consume one slot.
 - The existing group update endpoint provides the `realtime_priority` toggle round-trip; no subscription manager was introduced before TW-14.
+
+## TW-14
+
+Status: COMPLETE
+Commit: 295ee50
+
+Verification:
+
+- `backend\.venv\Scripts\python.exe -m pytest tests/services/shioaji/test_stream.py tests/services/test_live_quote_store.py tests/services/test_subscription_manager.py -q` — 9 passed.
+- Focused Shioaji and existing quote-service regression suite — 39 passed.
+- `backend\.venv\Scripts\ruff.exe check` on TW-14 source and focused tests — passed.
+- `git diff --check` — passed before commit.
+
+Discoveries:
+
+- The Shioaji sidecar Quote-only contract uses `POST /api/v1/stream/subscribe` / `unsubscribe` and one `GET /api/v1/stream/data/quote_stk` SSE connection.
+- `SubscriptionManager` removes obsolete subscriptions before adding replacements, so it cannot exceed its validated 180-slot operational limit; a reconnect recomputes wanted subscriptions through its provider.
+- `LiveQuoteStore` retains last-known values and explicitly emits `CACHED` for evicted symbols or `DISCONNECTED` after stream loss. Browser SSE wiring remains TW-15 scope.
