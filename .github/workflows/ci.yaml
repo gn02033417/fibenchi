@@ -49,6 +49,27 @@ jobs:
       - run: uv pip install --system -r requirements-dev.txt
       - run: ruff check .
 
+      - name: Verify Taiwan credential boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("..").resolve()
+          forbidden = ("SJ_API_KEY", "SJ_SEC_KEY")
+          frontend_source = root / "frontend" / "src"
+          for path in frontend_source.rglob("*"):
+              if path.is_file() and path.suffix in {".ts", ".tsx", ".js", ".jsx", ".html", ".css"}:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+                  assert not any(name in text for name in forbidden), path
+
+          compose = (root / "docker-compose.prod.yaml").read_text(encoding="utf-8")
+          sidecar = compose.split("\n  shioaji:\n", 1)[1].split("\n  app:\n", 1)[0]
+          app = compose.split("\n  app:\n", 1)[1]
+          assert all(name in sidecar for name in forbidden)
+          assert not any(name in app for name in forbidden)
+          print("Taiwan sidecar credentials stay on the shioaji service boundary")
+          PY
+
       - name: Upgrade and verify clean PostgreSQL database
         env:
           DATABASE_URL: postgresql+asyncpg://fibenchi:fibenchi@127.0.0.1:5432/fibenchi
@@ -97,6 +118,9 @@ jobs:
             exit 1
           fi
 
+      - name: Taiwan offline integration gate
+        run: pytest tests/integration/test_taiwan_e2e.py tests/integration/test_taiwan_migration_e2e.py -v
+
       - run: pytest
       - run: uv pip install --system pip-audit
       - run: pip-audit -r requirements.txt
@@ -122,17 +146,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run build
+
+      - name: Verify public frontend bundle has no Shioaji credentials
+        run: |
+          if grep -R -n -E 'SJ_API_KEY|SJ_SEC_KEY' dist; then
+            echo "::error::Shioaji credentials or credential names leaked into the frontend bundle"
+            exit 1
+          fi
       - run: pnpm run test
       - run: pnpm audit --prod || true
 
   build-image:
     needs: [test-backend, test-frontend]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/login-action@v3
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -152,9 +184,8 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
