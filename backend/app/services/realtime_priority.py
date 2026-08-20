@@ -10,6 +10,7 @@ from app.config import settings
 def compute_wanted_symbols(
     *,
     active_asset: str | None = None,
+    active_assets: Iterable[str] = (),
     realtime_priority_groups: Sequence[Iterable[str]] = (),
     active_group_symbols: Iterable[str] = (),
     recent_symbols: Iterable[str] = (),
@@ -18,10 +19,11 @@ def compute_wanted_symbols(
 ) -> list[str]:
     """Return the deterministic, de-duplicated subscription wanted set.
 
-    Priority is active asset, realtime-priority groups (in caller-supplied
-    stable group order), active group, recent symbols, then all remaining
-    tracked symbols. Ties within every non-recency tier sort by raw symbol;
-    ``recent_symbols`` preserves its caller-provided newest-first order.
+    Priority is the explicitly active asset, active browser assets,
+    realtime-priority groups (in caller-supplied stable group order), active
+    group, recent symbols, then all remaining tracked symbols. Ties within
+    every non-recency tier sort by raw symbol; ``recent_symbols`` preserves
+    its caller-provided newest-first order.
     """
     limit = settings.shioaji_max_subscriptions if cap is None else cap
     if limit <= 0:
@@ -42,6 +44,8 @@ def compute_wanted_symbols(
 
     if active_asset is not None:
         add((active_asset,), preserve_order=True)
+    if len(selected) < limit:
+        add(active_assets, preserve_order=False)
     for group_symbols in realtime_priority_groups:
         if len(selected) == limit:
             return selected

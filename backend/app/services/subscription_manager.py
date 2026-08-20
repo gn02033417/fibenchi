@@ -66,6 +66,7 @@ class SubscriptionManager:
         self._reconnect_initial_delay = reconnect_initial_delay
         self._reconnect_max_delay = reconnect_max_delay
         self._current: dict[str, ShioajiQuoteSubscription] = {}
+        self._reconcile_lock = asyncio.Lock()
 
     @property
     def current_symbols(self) -> tuple[str, ...]:
@@ -76,6 +77,13 @@ class SubscriptionManager:
         wanted: Iterable[ShioajiQuoteSubscription],
     ) -> SubscriptionDiff:
         """Apply only the subscribe/unsubscribe operations required by ``wanted``."""
+        async with self._reconcile_lock:
+            return await self._reconcile_locked(wanted)
+
+    async def _reconcile_locked(
+        self,
+        wanted: Iterable[ShioajiQuoteSubscription],
+    ) -> SubscriptionDiff:
         target = self._bounded_target(wanted)
         to_unsubscribe = [
             subscription
@@ -107,13 +115,15 @@ class SubscriptionManager:
 
     async def mark_disconnected(self) -> None:
         """Keep last-known values but make current upstream loss explicit."""
-        await self._store.mark_disconnected(tuple(self._current))
-        self._current.clear()
+        async with self._reconcile_lock:
+            await self._store.mark_disconnected(tuple(self._current))
+            self._current.clear()
 
     async def restore_after_reconnect(self, wanted_provider: WantedProvider) -> SubscriptionDiff:
         """Recompute desired subscriptions because demand may have changed while offline."""
-        self._current.clear()
-        return await self.reconcile(await _resolve_wanted(wanted_provider))
+        async with self._reconcile_lock:
+            self._current.clear()
+            return await self._reconcile_locked(await _resolve_wanted(wanted_provider))
 
     async def run_forever(self, wanted_provider: WantedProvider) -> None:
         """Consume one upstream SSE connection, reconnecting only after it fails or closes."""

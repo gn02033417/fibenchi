@@ -13,6 +13,7 @@ from app.config import settings as app_settings
 from app.database import async_session, engine
 from app.models.symbol_directory import TAIWAN_EXCHANGES
 from app.repositories.asset_repo import AssetRepository
+from app.repositories.group_repo import GroupRepository
 from app.routers import (
     annotations,
     assets,
@@ -40,6 +41,7 @@ from app.services import quote_service
 from app.services.currency_service import load_cache as load_currency_cache
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.price_providers import init_price_provider
+from app.services.realtime_demand import RealtimeDemandController
 from app.services.realtime_priority import compute_wanted_symbols
 from app.services.shioaji.stream import ShioajiQuoteStream, ShioajiQuoteSubscription
 from app.services.subscription_manager import SubscriptionManager
@@ -61,8 +63,16 @@ scheduler = AsyncIOScheduler()
 
 async def _tracked_quote_subscriptions() -> list[ShioajiQuoteSubscription]:
     """Build a deterministic Taiwan Quote subscription set from tracked assets."""
+    demand = await quote_service.get_realtime_demand_snapshot()
     async with async_session() as db:
         refs = await AssetRepository(db).list_in_any_group_refs()
+        group_repo = GroupRepository(db)
+        priority_groups = await group_repo.list_realtime_priority_groups()
+        active_groups = [
+            group
+            for group_id in demand.active_group_ids
+            if (group := await group_repo.get_by_id(group_id)) is not None
+        ]
 
     subscriptions_by_symbol: dict[str, ShioajiQuoteSubscription] = {}
     for ref in refs:
@@ -71,7 +81,23 @@ async def _tracked_quote_subscriptions() -> list[ShioajiQuoteSubscription]:
         subscription = ShioajiQuoteSubscription(code=ref.symbol, exchange=ref.exchange)
         subscriptions_by_symbol.setdefault(subscription.code, subscription)
 
-    wanted_symbols = compute_wanted_symbols(tracked_symbols=subscriptions_by_symbol)
+    def subscribed_symbols(group) -> list[str]:
+        return [
+            asset.symbol.upper()
+            for asset in group.assets
+            if asset.symbol.upper() in subscriptions_by_symbol
+        ]
+
+    wanted_symbols = compute_wanted_symbols(
+        active_assets=(symbol for symbol in demand.active_assets if symbol in subscriptions_by_symbol),
+        realtime_priority_groups=[subscribed_symbols(group) for group in priority_groups],
+        active_group_symbols=(
+            symbol
+            for group in active_groups
+            for symbol in subscribed_symbols(group)
+        ),
+        tracked_symbols=subscriptions_by_symbol,
+    )
     return [subscriptions_by_symbol[symbol] for symbol in wanted_symbols]
 
 
@@ -103,9 +129,16 @@ async def lifespan(app: FastAPI):
     warmup_task = asyncio.create_task(startup_warmup())
     live_quote_store = LiveQuoteStore()
     subscription_manager = SubscriptionManager(ShioajiQuoteStream(), live_quote_store)
+
+    async def refresh_realtime_demand() -> None:
+        await subscription_manager.reconcile(await _tracked_quote_subscriptions())
+
+    realtime_demand_controller = RealtimeDemandController(refresh_realtime_demand)
     quote_service.configure_live_quote_store(live_quote_store)
+    quote_service.configure_realtime_demand_controller(realtime_demand_controller)
     app.state.live_quote_store = live_quote_store
     app.state.subscription_manager = subscription_manager
+    app.state.realtime_demand_controller = realtime_demand_controller
     realtime_task = asyncio.create_task(
         subscription_manager.run_forever(_tracked_quote_subscriptions)
     )
@@ -116,6 +149,8 @@ async def lifespan(app: FastAPI):
     warmup_task.cancel()
     with suppress(asyncio.CancelledError):
         await realtime_task
+    quote_service.configure_realtime_demand_controller(None)
+    app.state.realtime_demand_controller = None
     scheduler.shutdown(wait=False)
     await engine.dispose()
 

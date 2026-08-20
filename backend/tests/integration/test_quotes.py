@@ -10,7 +10,8 @@ import pytest
 from app.models.symbol_directory import SymbolDirectory
 from app.schemas.quote import Quote
 from app.services.live_quote_store import LiveQuoteStore
-from app.services.quote_service import configure_live_quote_store
+from app.services.quote_service import configure_live_quote_store, configure_realtime_demand_controller
+from app.services.realtime_demand import RealtimeDemandController, RealtimeDemandSnapshot
 from tests.conftest import TestSession
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
@@ -144,6 +145,34 @@ async def test_stream_quotes_cache_headers_remain_compatible(client, finite_stor
 
     assert resp.headers.get("cache-control") == "no-cache"
     assert resp.headers.get("x-accel-buffering") == "no"
+
+
+async def test_stream_quotes_registers_and_removes_active_view_query_demand(client, finite_store):
+    snapshots: list[RealtimeDemandSnapshot] = []
+    controller: RealtimeDemandController
+
+    async def refresh():
+        snapshots.append(await controller.snapshot())
+
+    controller = RealtimeDemandController(refresh)
+    configure_realtime_demand_controller(controller)
+    try:
+        resp = await client.get(
+            "/api/quotes/stream",
+            params={
+                "active_asset": "2330, 0050",
+                "active_group": "7,invalid,0",
+            },
+        )
+    finally:
+        configure_realtime_demand_controller(None)
+
+    assert resp.status_code == 200
+    assert snapshots[0] == RealtimeDemandSnapshot(
+        active_assets=("0050", "2330"),
+        active_group_ids=(7,),
+    )
+    assert snapshots[-1] == RealtimeDemandSnapshot()
 
 
 async def test_stream_quotes_multiple_symbols_uses_first_snapshot(client, finite_store):

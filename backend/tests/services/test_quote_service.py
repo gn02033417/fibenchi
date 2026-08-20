@@ -11,9 +11,11 @@ from app.schemas.quote import Quote
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.quote_service import (
     configure_live_quote_store,
+    configure_realtime_demand_controller,
     get_quotes,
     quote_event_generator,
 )
+from app.services.realtime_demand import RealtimeDemandController
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
@@ -119,3 +121,29 @@ async def test_stream_cancellation_unregisters_store_listener(live_store):
         await stream.aclose()
 
     assert live_store.listener_count == 0
+
+
+async def test_stream_registers_and_removes_active_view_demand(live_store):
+    refresh = AsyncMock()
+    controller = RealtimeDemandController(refresh)
+    configure_realtime_demand_controller(controller)
+
+    try:
+        with patch(
+            "app.services.quote_service._tracked_asset_refs",
+            new=AsyncMock(return_value=[]),
+        ):
+            stream = quote_event_generator(
+                active_assets=frozenset(("2330",)),
+                active_group_ids=frozenset((7,)),
+            )
+            _ = await anext(stream)
+            snapshot = await controller.snapshot()
+            await stream.aclose()
+
+        assert snapshot.active_assets == ("2330",)
+        assert snapshot.active_group_ids == (7,)
+        assert await controller.snapshot() == type(snapshot)()
+        assert refresh.await_count == 2
+    finally:
+        configure_realtime_demand_controller(None)

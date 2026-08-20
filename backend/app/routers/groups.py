@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import PeriodType
@@ -9,6 +9,12 @@ from app.services import group_service
 from app.services.compute.group import compute_and_cache_indicators, get_batch_sparklines
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
+
+
+async def _refresh_realtime_demand(request: Request) -> None:
+    controller = getattr(request.app.state, "realtime_demand_controller", None)
+    if controller is not None:
+        await controller.refresh()
 
 
 @router.get("", response_model=list[GroupResponse], summary="List all groups")
@@ -22,8 +28,14 @@ async def create_group(data: GroupCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/reorder", response_model=list[GroupResponse], summary="Reorder groups")
-async def reorder_groups(data: GroupReorder, db: AsyncSession = Depends(get_db)):
-    return await group_service.reorder_groups(db, data.group_ids)
+async def reorder_groups(
+    data: GroupReorder,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    groups = await group_service.reorder_groups(db, data.group_ids)
+    await _refresh_realtime_demand(request)
+    return groups
 
 
 @router.get("/{group_id}", response_model=GroupResponse, summary="Get a group by ID")
@@ -32,23 +44,47 @@ async def get_group_detail(group_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{group_id}", response_model=GroupResponse, summary="Update a group")
-async def update_group(group_id: int, data: GroupUpdate, db: AsyncSession = Depends(get_db)):
-    return await group_service.update_group(db, group_id, data.model_dump(exclude_unset=True))
+async def update_group(
+    group_id: int,
+    data: GroupUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    changes = data.model_dump(exclude_unset=True)
+    group = await group_service.update_group(db, group_id, changes)
+    if "realtime_priority" in changes:
+        await _refresh_realtime_demand(request)
+    return group
 
 
 @router.delete("/{group_id}", status_code=204, summary="Delete a group")
-async def delete_group(group_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_group(group_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     await group_service.delete_group(db, group_id)
+    await _refresh_realtime_demand(request)
 
 
 @router.post("/{group_id}/assets", response_model=GroupResponse, summary="Add assets to a group")
-async def add_assets_to_group(group_id: int, data: GroupAddAssets, db: AsyncSession = Depends(get_db)):
-    return await group_service.add_assets(db, group_id, data.asset_ids)
+async def add_assets_to_group(
+    group_id: int,
+    data: GroupAddAssets,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    group = await group_service.add_assets(db, group_id, data.asset_ids)
+    await _refresh_realtime_demand(request)
+    return group
 
 
 @router.delete("/{group_id}/assets/{asset_id}", response_model=GroupResponse, summary="Remove an asset from a group")
-async def remove_asset_from_group(group_id: int, asset_id: int, db: AsyncSession = Depends(get_db)):
-    return await group_service.remove_asset(db, group_id, asset_id)
+async def remove_asset_from_group(
+    group_id: int,
+    asset_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    group = await group_service.remove_asset(db, group_id, asset_id)
+    await _refresh_realtime_demand(request)
+    return group
 
 
 @router.get("/{group_id}/sparklines", response_model=dict[str, list[SparklinePointResponse]], summary="Batch close prices for group assets")

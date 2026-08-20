@@ -14,8 +14,9 @@ import { MarketStatusDot } from "@/components/market-status-dot"
 import { resolveIcon } from "@/lib/icon-utils"
 import { buildYahooFinanceUrl, buildYahooQuoteUrl, formatAssetPriceWithSettings } from "@/lib/format"
 import { ChangePct } from "@/components/change-pct"
+import { QuoteFreshness } from "@/components/quote-freshness"
 import type { Asset } from "@/lib/api"
-import { useQuote } from "@/lib/quote-stream"
+import { useActiveAssetDemand, useQuote } from "@/lib/quote-stream"
 import { usePriceFlash } from "@/lib/use-price-flash"
 import { useRefreshPrices, useCreateAsset, useGroups, useAddAssetsToGroup } from "@/lib/queries"
 import { useSettings } from "@/lib/settings"
@@ -47,6 +48,7 @@ export function Header({
   const createAsset = useCreateAsset()
   const { data: groups } = useGroups()
   const addToGroup = useAddAssetsToGroup()
+  useActiveAssetDemand(isTracked ? symbol : undefined)
   const quote = useQuote(symbol.toUpperCase())
   const price = quote?.price ?? null
   const changePct = quote?.change_percent ?? null
@@ -89,6 +91,7 @@ export function Header({
             className="text-sm font-medium rounded px-1"
           />
         )}
+        <QuoteFreshness quote={quote} />
         <a
           href={settings.yahoo_link_mode === "quote" ? buildYahooQuoteUrl(symbol) : buildYahooFinanceUrl(symbol)}
           target="_blank"

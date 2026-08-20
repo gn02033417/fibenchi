@@ -190,6 +190,20 @@ export function formatDateShort(iso: string): string {
   })
 }
 
+/** Render the last quote update in the browser's local time, or nothing for an
+ * unavailable/malformed timestamp. Freshness UI must never invent a time. */
+export function formatQuoteUpdatedAt(value: string | null | undefined): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 export function buildYahooQuoteUrl(symbol: string): string {
   return `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`
 }

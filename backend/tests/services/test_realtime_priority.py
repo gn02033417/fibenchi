@@ -46,6 +46,18 @@ def test_active_asset_cannot_be_evicted_by_lower_priority_symbols():
     assert wanted == ["0050"]
 
 
+def test_active_browser_assets_share_the_highest_priority_tier():
+    wanted = compute_wanted_symbols(
+        active_asset="0050",
+        active_assets=("2317", "2330", "0050"),
+        realtime_priority_groups=(("1101",),),
+        tracked_symbols=("0050", "2317", "2330", "1101"),
+        cap=4,
+    )
+
+    assert wanted == ["0050", "2317", "2330", "1101"]
+
+
 def test_tier_ties_are_sorted_and_cap_is_enforced_deterministically():
     first = compute_wanted_symbols(
         realtime_priority_groups=({"2317", "2330"},),

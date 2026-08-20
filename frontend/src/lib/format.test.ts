@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { compactSigFig, formatAssetPrice, formatCompactNumber, formatCompactPrice } from "./format"
+import { compactSigFig, formatAssetPrice, formatCompactNumber, formatCompactPrice, formatQuoteUpdatedAt } from "./format"
 import type { AssetFormatHints } from "./format"
 
 describe("compactSigFig", () => {
@@ -70,6 +70,14 @@ describe("formatCompactPrice", () => {
   it("handles currencies without a symbol (NKT.CO / DKK)", () => {
     expect(formatCompactPrice(1122, "DKK")).toBe("DKK 1.12K")
     expect(formatCompactPrice(72000, "DKK")).toBe("DKK 72.0K")
+  })
+})
+
+describe("formatQuoteUpdatedAt", () => {
+  it("keeps unavailable timestamps unavailable instead of manufacturing freshness", () => {
+    expect(formatQuoteUpdatedAt(null)).toBeNull()
+    expect(formatQuoteUpdatedAt("not-a-date")).toBeNull()
+    expect(formatQuoteUpdatedAt("2026-08-19T09:08:00Z")).not.toBeNull()
   })
 })
 
