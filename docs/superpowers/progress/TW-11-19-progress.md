@@ -34,3 +34,22 @@ Discoveries:
 - Daily persistence is generated solely from normalized minute Kbars; an active XTAI session is excluded while the same session becomes eligible after close.
 - Settled writes clear the indicator snapshot cache; the existing scheduled refresh then re-warms group caches.
 - The temporary non-Taiwan compatibility branch remains isolated in `price_sync.py` for TW-18 cleanup and is not used by the Taiwan runtime path.
+
+## TW-13
+
+Status: COMPLETE
+Commit: a25a720
+
+Verification:
+
+- `backend\.venv\Scripts\python.exe -m pytest tests/services/test_realtime_priority.py tests/services/test_group_service.py tests/repositories/test_group_repo.py tests/integration/test_groups.py -q` — 46 passed.
+- `backend\.venv\Scripts\ruff.exe check` on TW-13 source and focused tests — passed.
+- `corepack pnpm run lint` — passed.
+- `corepack pnpm run build` — passed; Vite reported only the existing chunk-size warning.
+- `git diff --check` — passed before commit.
+
+Discoveries:
+
+- `SHIOAJI_MAX_SUBSCRIPTIONS` defaults to 180 and is validated at configuration load time with a hard upper bound of 200.
+- `compute_wanted_symbols(...)` is a pure, deterministic demand seam: active asset, realtime-priority groups, active group, recent symbols, then remaining tracked symbols; duplicate symbols always consume one slot.
+- The existing group update endpoint provides the `realtime_priority` toggle round-trip; no subscription manager was introduced before TW-14.
