@@ -182,4 +182,3 @@ class TWSEProvider(SymbolProvider):
     @staticmethod
     def available_markets() -> list[dict]:
         return [{"key": "tse", "label": "Taiwan Stock Exchange (TSE)"}]
-

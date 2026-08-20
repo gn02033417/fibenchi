@@ -147,4 +147,3 @@ async def sync_taiwan_symbol_directory(
         active_count=active_count,
         inactive_count=len(merged_symbols) - active_count,
     )
-

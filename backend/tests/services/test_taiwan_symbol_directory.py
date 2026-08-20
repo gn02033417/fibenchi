@@ -180,4 +180,3 @@ def test_daily_taiwan_sync_is_registered_without_replacing_existing_jobs():
     assert "symbol_directory_sync" in tasks
     assert "taiwan_symbol_directory_sync" in tasks
     assert isinstance(tasks["taiwan_symbol_directory_sync"].resolve_trigger(), CronTrigger)
-

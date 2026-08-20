@@ -334,4 +334,3 @@ class TPEXProvider(SymbolProvider):
 # Keep both spellings available: TPEx is the exchange's official branding,
 # while TPEX matches the module/provider key convention used by this package.
 TPExProvider = TPEXProvider
-
