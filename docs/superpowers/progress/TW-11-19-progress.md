@@ -130,3 +130,26 @@ Discoveries:
 - Official Shioaji Quote events expose `volume` as the current tick volume and `total_volume` as cumulative volume since market open; `ShioajiQuoteUpdate` retains both before the public `Quote` mapping.
 - `IntradayAggregator` owns Asia/Taipei/XTAI minute buckets, deduplicates event identities, emits a forming current bar and a completed prior bar on rollover, and persists only completed buckets through the existing `(asset_id, timestamp)` intraday key.
 - Disconnects reset cumulative-volume attribution for the next event and mark the next real bar with `gap=True`; missing minutes are never synthesized. The 60-second Yahoo intraday task is disabled at scheduler resolution and is a no-op if invoked in Shioaji mode.
+
+## TW-18
+
+Status: COMPLETE
+Commit: 1d747d2
+
+Verification:
+
+- `backend\.venv\Scripts\python.exe -m pytest tests/services/test_taiwan_runtime_has_no_yahoo.py -v` — 2 passed.
+- Focused intraday, disabled holdings, and background registry suite — 38 passed.
+- `backend\.venv\Scripts\python.exe -m pytest -q` — 921 passed, 752 warnings.
+- `backend\.venv\Scripts\ruff.exe check app tests` — passed.
+- `corepack pnpm run test` — 56 passed.
+- `corepack pnpm run lint` — passed.
+- `corepack pnpm run build` — passed; Vite reported only the existing chunk-size warning.
+- `git diff --cached --check` — passed before commit.
+- `docker compose run --rm backend pytest tests/services/test_taiwan_runtime_has_no_yahoo.py -v` — not runnable because `docker` is not installed on this machine; the same focused gate passed directly in the repository backend venv.
+
+Discoveries:
+
+- The Taiwan runtime no longer imports `app.services.yahoo`; the new AST and subprocess gate also proves the active app can import while blocking both `app.services.yahoo` and `yahooquery`.
+- Yahoo-only earnings, ETF holdings, fundamentals, external-link settings, and remote symbol search UI are removed or hidden. Local Taiwan directory search remains the only frontend symbol-search path.
+- The legacy Yahoo package and provider facade remain isolated for future reuse, while `yahooquery` is no longer a required runtime dependency. Legacy intraday persistence is isolated under `app.services.yahoo.legacy_intraday` and is no longer scheduled.
