@@ -2,20 +2,25 @@
 
 import asyncio
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.domain import AssetRef
 from app.schemas.quote import Quote
+from app.services.intraday_aggregator import IntradayAggregator
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.quote_service import (
+    configure_intraday_aggregator,
     configure_live_quote_store,
     configure_realtime_demand_controller,
     get_quotes,
     quote_event_generator,
 )
 from app.services.realtime_demand import RealtimeDemandController
+from app.services.shioaji.stream import ShioajiQuoteUpdate
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
@@ -147,3 +152,47 @@ async def test_stream_registers_and_removes_active_view_demand(live_store):
         assert refresh.await_count == 2
     finally:
         configure_realtime_demand_controller(None)
+
+
+async def test_stream_emits_live_intraday_updates_from_aggregator(live_store):
+    aggregator = IntradayAggregator()
+    configure_intraday_aggregator(aggregator)
+    when = datetime(2026, 8, 20, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    update = ShioajiQuoteUpdate(
+        quote=Quote(
+            symbol="2330",
+            price=100,
+            volume=3,
+            currency="TWD",
+            data_status="LIVE",
+            updated_at=when,
+        ),
+        timestamp=when,
+        tick_volume=3,
+        total_volume=3,
+        event_id="intraday-1",
+    )
+
+    try:
+        with (
+            patch(
+                "app.services.quote_service._tracked_asset_refs",
+                new=AsyncMock(return_value=[AssetRef("2330", 1, exchange="TSE")]),
+            ),
+            patch(
+                "app.services.quote_service.get_intraday_bars",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            stream = quote_event_generator(intraday_symbols=frozenset(("2330",)))
+            await anext(stream)
+            aggregator.ingest(update)
+            event = await asyncio.wait_for(anext(stream), timeout=0.1)
+            await stream.aclose()
+    finally:
+        configure_intraday_aggregator(None)
+
+    assert event.startswith("event: intraday\n")
+    payload = json.loads(event.split("data: ", 1)[1])
+    assert payload["2330"][0]["price"] == 100
+    assert payload["2330"][0]["status"] == "forming"

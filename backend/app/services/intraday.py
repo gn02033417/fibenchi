@@ -1,6 +1,7 @@
 """Intraday price fetching, storage, and cleanup for live day view."""
 
 import logging
+from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
 from typing import cast
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from app.domain import AssetRef
 from app.domain.phases import PHASE_TO_SESSION, Phase, Session
 from app.models.intraday import IntradayPrice
 from app.schemas.intraday import IntradayBar
+from app.services.intraday_aggregator import IntradayBucket
 from app.services.yahoo import yahoo_client
 
 logger = logging.getLogger(__name__)
@@ -168,9 +170,54 @@ async def get_intraday_bars(
             # DB column is str-typed but only ever stores the 3 session values
             # (written via _classify_session); Pydantic re-validates at runtime.
             session=cast(Session, row.session),
+            open=row.price,
+            high=row.price,
+            low=row.price,
+            close=row.price,
+            status="completed",
         ))
 
     return bars_by_symbol
+
+
+async def persist_live_intraday_bars(
+    db: AsyncSession,
+    refs: Iterable[AssetRef],
+    bars: Iterable[IntradayBucket],
+) -> int:
+    """Persist completed live buckets without inventing missing minutes.
+
+    The existing ``intraday_prices`` table intentionally stores the chart's
+    close as ``price``.  Forming buckets remain in the in-memory aggregator
+    and SSE stream; only a minute observed to have rolled over is persisted.
+    """
+    by_symbol = {ref.symbol.upper(): ref for ref in refs if ref.id is not None}
+    rows = [
+        {
+            "asset_id": by_symbol[bar.symbol.upper()].id,
+            "timestamp": bar.timestamp,
+            "price": bar.close,
+            "volume": bar.volume,
+            "session": bar.session,
+        }
+        for bar in bars
+        if bar.status == "completed" and bar.symbol.upper() in by_symbol
+    ]
+    if not rows:
+        return 0
+
+    stmt = pg_insert(IntradayPrice).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["asset_id", "timestamp"],
+        set_={
+            "price": stmt.excluded.price,
+            "volume": stmt.excluded.volume,
+            "session": stmt.excluded.session,
+        },
+    )
+    await db.execute(stmt)
+    await db.commit()
+    return len(rows)
 
 
 async def cleanup_old_intraday(db: AsyncSession) -> int:

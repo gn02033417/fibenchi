@@ -13,7 +13,7 @@ from app.config import settings
 from app.schemas.quote import Quote
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.shioaji.client import ShioajiClientError
-from app.services.shioaji.stream import ShioajiQuoteSubscription
+from app.services.shioaji.stream import ShioajiQuoteSubscription, ShioajiQuoteUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,8 @@ WantedProvider = Callable[
     [],
     Iterable[ShioajiQuoteSubscription] | Awaitable[Iterable[ShioajiQuoteSubscription]],
 ]
+QuoteUpdateHandler = Callable[[ShioajiQuoteUpdate], Awaitable[None] | None]
+DisconnectHandler = Callable[[tuple[str, ...]], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,8 @@ class SubscriptionManager:
         max_subscriptions: int | None = None,
         reconnect_initial_delay: float = 1.0,
         reconnect_max_delay: float = 30.0,
+        on_quote_update: QuoteUpdateHandler | None = None,
+        on_disconnect: DisconnectHandler | None = None,
     ) -> None:
         limit = settings.shioaji_max_subscriptions if max_subscriptions is None else max_subscriptions
         if not 1 <= limit <= self.HARD_MAX_SUBSCRIPTIONS:
@@ -65,6 +69,8 @@ class SubscriptionManager:
         self._max_subscriptions = limit
         self._reconnect_initial_delay = reconnect_initial_delay
         self._reconnect_max_delay = reconnect_max_delay
+        self._on_quote_update = on_quote_update
+        self._on_disconnect = on_disconnect
         self._current: dict[str, ShioajiQuoteSubscription] = {}
         self._reconcile_lock = asyncio.Lock()
 
@@ -116,7 +122,10 @@ class SubscriptionManager:
     async def mark_disconnected(self) -> None:
         """Keep last-known values but make current upstream loss explicit."""
         async with self._reconcile_lock:
-            await self._store.mark_disconnected(tuple(self._current))
+            symbols = tuple(self._current)
+            await self._store.mark_disconnected(symbols)
+            if self._on_disconnect is not None:
+                await _maybe_await(self._on_disconnect(symbols))
             self._current.clear()
 
     async def restore_after_reconnect(self, wanted_provider: WantedProvider) -> SubscriptionDiff:
@@ -131,8 +140,15 @@ class SubscriptionManager:
         while True:
             try:
                 await self.restore_after_reconnect(wanted_provider)
-                async for quote in self._stream.quote_events():
-                    await self._store.update(quote)
+                async for event in self._quote_updates():
+                    update = (
+                        event
+                        if isinstance(event, ShioajiQuoteUpdate)
+                        else ShioajiQuoteUpdate.from_quote(event)
+                    )
+                    if self._on_quote_update is not None:
+                        await _maybe_await(self._on_quote_update(update))
+                    await self._store.update(update.quote)
                     delay = self._reconnect_initial_delay
                 raise ShioajiStreamDisconnected("Shioaji Quote SSE stream closed")
             except asyncio.CancelledError:
@@ -144,6 +160,16 @@ class SubscriptionManager:
                 delay = min(delay * 2, self._reconnect_max_delay)
             else:
                 delay = self._reconnect_initial_delay
+
+    async def _quote_updates(self) -> AsyncIterator[Quote | ShioajiQuoteUpdate]:
+        """Prefer raw-volume-aware updates while keeping fake streams compatible."""
+        quote_updates = getattr(self._stream, "quote_updates", None)
+        if quote_updates is not None:
+            async for update in quote_updates():
+                yield update
+            return
+        async for quote in self._stream.quote_events():
+            yield quote
 
     def _bounded_target(
         self,
@@ -170,6 +196,11 @@ async def _resolve_wanted(wanted_provider: WantedProvider) -> Iterable[ShioajiQu
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+async def _maybe_await(result) -> None:
+    if inspect.isawaitable(result):
+        await result
 
 
 __all__ = [

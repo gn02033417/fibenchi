@@ -39,6 +39,8 @@ from app.routers import (
 from app.routers import settings as settings_router
 from app.services import quote_service
 from app.services.currency_service import load_cache as load_currency_cache
+from app.services.intraday import persist_live_intraday_bars
+from app.services.intraday_aggregator import IntradayAggregator
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.price_providers import init_price_provider
 from app.services.realtime_demand import RealtimeDemandController
@@ -128,15 +130,59 @@ async def lifespan(app: FastAPI):
     # cache builds in parallel so the first group hit is warm.
     warmup_task = asyncio.create_task(startup_warmup())
     live_quote_store = LiveQuoteStore()
-    subscription_manager = SubscriptionManager(ShioajiQuoteStream(), live_quote_store)
+    intraday_aggregator = IntradayAggregator()
+    intraday_ref_cache = {}
+    intraday_ref_lock = asyncio.Lock()
+
+    async def consume_live_intraday(update) -> None:
+        try:
+            completed = [
+                bar
+                for bar in intraday_aggregator.ingest(update)
+                if bar.status == "completed"
+            ]
+            if not completed:
+                return
+
+            symbols = {bar.symbol.upper() for bar in completed}
+            async with intraday_ref_lock:
+                missing = symbols - set(intraday_ref_cache)
+                if missing:
+                    async with async_session() as db:
+                        refs = await AssetRepository(db).list_in_any_group_refs()
+                    intraday_ref_cache.update({ref.symbol.upper(): ref for ref in refs})
+                refs = [
+                    intraday_ref_cache[symbol]
+                    for symbol in symbols
+                    if symbol in intraday_ref_cache
+                ]
+
+            if not refs:
+                return
+            async with async_session() as db:
+                await persist_live_intraday_bars(db, refs, completed)
+        except Exception:
+            logger.exception("Live intraday aggregation/persistence failed")
+
+    def mark_intraday_disconnected(symbols: tuple[str, ...]) -> None:
+        intraday_aggregator.mark_disconnected(symbols)
+
+    subscription_manager = SubscriptionManager(
+        ShioajiQuoteStream(),
+        live_quote_store,
+        on_quote_update=consume_live_intraday,
+        on_disconnect=mark_intraday_disconnected,
+    )
 
     async def refresh_realtime_demand() -> None:
         await subscription_manager.reconcile(await _tracked_quote_subscriptions())
 
     realtime_demand_controller = RealtimeDemandController(refresh_realtime_demand)
     quote_service.configure_live_quote_store(live_quote_store)
+    quote_service.configure_intraday_aggregator(intraday_aggregator)
     quote_service.configure_realtime_demand_controller(realtime_demand_controller)
     app.state.live_quote_store = live_quote_store
+    app.state.intraday_aggregator = intraday_aggregator
     app.state.subscription_manager = subscription_manager
     app.state.realtime_demand_controller = realtime_demand_controller
     realtime_task = asyncio.create_task(
@@ -149,8 +195,10 @@ async def lifespan(app: FastAPI):
     warmup_task.cancel()
     with suppress(asyncio.CancelledError):
         await realtime_task
+    quote_service.configure_intraday_aggregator(None)
     quote_service.configure_realtime_demand_controller(None)
     app.state.realtime_demand_controller = None
+    app.state.intraday_aggregator = None
     scheduler.shutdown(wait=False)
     await engine.dispose()
 

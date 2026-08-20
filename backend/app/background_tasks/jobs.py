@@ -158,9 +158,20 @@ async def scheduled_taiwan_symbol_directory_sync():
             logger.error("Taiwan symbol directory sync failed: %s", result.error)
 
 
-@background_task("intraday_sync", trigger=IntervalTrigger(seconds=60))
+def _intraday_trigger() -> IntervalTrigger | None:
+    """Keep the legacy Yahoo job out of the Taiwan/Shioaji scheduler."""
+    if app_settings.price_provider.strip().lower() == "shioaji":
+        logger.info("Legacy Yahoo intraday sync disabled for Shioaji mode")
+        return None
+    return IntervalTrigger(seconds=60)
+
+
+@background_task("intraday_sync", trigger=_intraday_trigger)
 async def scheduled_intraday_sync():
     """Fetch 1m intraday bars for all grouped assets."""
+    if app_settings.price_provider.strip().lower() == "shioaji":
+        logger.debug("Skipping legacy Yahoo intraday sync in Shioaji mode")
+        return
     from app.repositories.asset_repo import AssetRepository
 
     async with async_session() as db:

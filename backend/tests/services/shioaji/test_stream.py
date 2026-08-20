@@ -114,3 +114,27 @@ async def test_quote_stream_wraps_non_success_sse_response():
             pass
 
     assert exc_info.value.path == "/api/v1/stream/data/quote_stk"
+
+
+@pytest.mark.asyncio
+async def test_quote_updates_preserve_tick_and_cumulative_volume():
+    payload = {
+        "code": "2330",
+        "exchange": "TSE",
+        "datetime": "2026-08-20T09:01:02.123456+08:00",
+        "close": 102,
+        "volume": 4,
+        "total_volume": 321,
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = "event: quote_stk\ndata: " + json.dumps(payload) + "\n\n"
+        return httpx.Response(200, content=body.encode())
+
+    updates = [update async for update in _stream(handler).quote_updates()]
+
+    assert len(updates) == 1
+    assert updates[0].tick_volume == 4
+    assert updates[0].total_volume == 321
+    assert updates[0].quote.volume == 321
+    assert updates[0].event_id.startswith("2330|")

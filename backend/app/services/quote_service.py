@@ -14,6 +14,7 @@ from app.repositories.asset_repo import AssetRepository
 from app.schemas.intraday import IntradayBar
 from app.schemas.quote import Quote
 from app.services.intraday import get_intraday_bars
+from app.services.intraday_aggregator import IntradayAggregator
 from app.services.live_quote_store import LiveQuoteStore
 from app.services.market_calendar import schedule_poll_hint
 from app.services.price_providers import get_price_provider
@@ -24,6 +25,7 @@ _quotes_payload_adapter = TypeAdapter(dict[str, Quote])
 _intraday_payload_adapter = TypeAdapter(dict[str, list[IntradayBar]])
 _live_quote_store = LiveQuoteStore()
 _realtime_demand_controller: RealtimeDemandController | None = None
+_intraday_aggregator: IntradayAggregator | None = None
 
 
 def configure_live_quote_store(store: LiveQuoteStore) -> None:
@@ -34,6 +36,12 @@ def configure_live_quote_store(store: LiveQuoteStore) -> None:
 
 def get_live_quote_store() -> LiveQuoteStore:
     return _live_quote_store
+
+
+def configure_intraday_aggregator(aggregator: IntradayAggregator | None) -> None:
+    """Bind live intraday SSE to the application-owned aggregator."""
+    global _intraday_aggregator
+    _intraday_aggregator = aggregator
 
 
 def configure_realtime_demand_controller(controller: RealtimeDemandController | None) -> None:
@@ -103,23 +111,87 @@ async def quote_event_generator(
                     or Quote.placeholder(symbol, currency="TWD", data_status="DISCONNECTED")
                     for symbol in tracked_refs
                 }
-                yield _quote_event(payload)
-
                 wanted_intraday = frozenset(intraday_symbols or ())
                 bar_refs = [ref for symbol, ref in tracked_refs.items() if symbol in wanted_intraday]
-                if bar_refs:
-                    async with async_session() as db:
-                        intraday_payload = await get_intraday_bars(db, bar_refs)
-                    if intraday_payload:
-                        yield _intraday_event(intraday_payload)
+                aggregator = _intraday_aggregator if bar_refs else None
+                async with _subscribe_intraday(aggregator) as intraday_updates:
+                    # Register the intraday listener before yielding the first
+                    # quote frame; a live event may arrive immediately after
+                    # the browser opens the connection.
+                    yield _quote_event(payload)
+                    if bar_refs:
+                        async with async_session() as db:
+                            intraday_payload = await get_intraday_bars(db, bar_refs)
+                        live_payload = _live_intraday_payload(aggregator, wanted_intraday)
+                        merged_payload = _merge_intraday_payload(intraday_payload, live_payload)
+                        if merged_payload:
+                            yield _intraday_event(merged_payload)
 
-                while True:
-                    quote = await updates.get()
-                    if quote.symbol not in tracked_refs:
-                        continue
-                    yield _quote_event({quote.symbol: quote})
+                    if intraday_updates is None:
+                        while True:
+                            quote = await updates.get()
+                            if quote.symbol not in tracked_refs:
+                                continue
+                            yield _quote_event({quote.symbol: quote})
+
+                    quote_task = asyncio.create_task(updates.get())
+                    intraday_task = asyncio.create_task(intraday_updates.get())
+                    try:
+                        while True:
+                            done, _ = await asyncio.wait(
+                                (quote_task, intraday_task),
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if quote_task in done:
+                                quote = quote_task.result()
+                                quote_task = asyncio.create_task(updates.get())
+                                if quote.symbol in tracked_refs:
+                                    yield _quote_event({quote.symbol: quote})
+                            if intraday_task in done:
+                                update = intraday_task.result()
+                                intraday_task = asyncio.create_task(intraday_updates.get())
+                                if update.symbol in wanted_intraday:
+                                    yield _intraday_event({update.symbol: [update.bar]})
+                    finally:
+                        for task in (quote_task, intraday_task):
+                            task.cancel()
+                        await asyncio.gather(quote_task, intraday_task, return_exceptions=True)
     except asyncio.CancelledError:
         return
+
+
+@asynccontextmanager
+async def _subscribe_intraday(aggregator: IntradayAggregator | None):
+    if aggregator is None:
+        yield None
+        return
+    async with aggregator.subscribe() as updates:
+        yield updates
+
+
+def _live_intraday_payload(
+    aggregator: IntradayAggregator | None,
+    symbols: frozenset[str],
+) -> dict[str, list[IntradayBar]]:
+    if aggregator is None:
+        return {}
+    return {
+        symbol: [bucket.as_bar() for bucket in aggregator.bars(symbol)]
+        for symbol in sorted(symbols)
+        if aggregator.bars(symbol)
+    }
+
+
+def _merge_intraday_payload(
+    persisted: dict[str, list[IntradayBar]],
+    live: dict[str, list[IntradayBar]],
+) -> dict[str, list[IntradayBar]]:
+    merged: dict[str, list[IntradayBar]] = {}
+    for symbol in set(persisted) | set(live):
+        by_time = {bar.time: bar for bar in persisted.get(symbol, ())}
+        by_time.update({bar.time: bar for bar in live.get(symbol, ())})
+        merged[symbol] = [by_time[time] for time in sorted(by_time)]
+    return merged
 
 
 @asynccontextmanager

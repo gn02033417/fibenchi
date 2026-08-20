@@ -29,7 +29,9 @@ from app.services.shioaji.stream import (
     ShioajiQuoteEvent,
     ShioajiQuoteStream,
     ShioajiQuoteSubscription,
+    ShioajiQuoteUpdate,
     map_quote_event_to_quote,
+    map_quote_event_to_update,
 )
 
 __all__ = [
@@ -54,7 +56,9 @@ __all__ = [
     "ShioajiSnapshotsResponse",
     "map_snapshot_to_quote",
     "ShioajiQuoteEvent",
+    "ShioajiQuoteUpdate",
     "ShioajiQuoteStream",
     "ShioajiQuoteSubscription",
+    "map_quote_event_to_update",
     "map_quote_event_to_quote",
 ]

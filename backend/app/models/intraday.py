@@ -1,3 +1,11 @@
+"""Persisted intraday close/volume rows for the live-day chart.
+
+The event-driven aggregator keeps full OHLC and forming/completed state in
+memory and over SSE.  This legacy-compatible table stores the completed bar's
+close in ``price``; changing the natural ``(asset_id, timestamp)`` key is not
+necessary for the Taiwan runtime path.
+"""
+
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String

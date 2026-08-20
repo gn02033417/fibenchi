@@ -15,9 +15,10 @@ from app.services.realtime_demand import RealtimeDemandController
 class FakeSubscriptionManager:
     instance: "FakeSubscriptionManager | None" = None
 
-    def __init__(self, stream, store):
+    def __init__(self, stream, store, **kwargs):
         self.stream = stream
         self.store = store
+        self.handlers = kwargs
         self.started = asyncio.Event()
         self.cancelled = False
         self.wanted_provider = None
@@ -60,8 +61,11 @@ async def test_lifespan_owns_one_shared_live_quote_store_and_manager_task():
             assert main.app.state.subscription_manager is manager
             assert main.app.state.live_quote_store is manager.store
             assert main.app.state.realtime_demand_controller is not None
+            assert main.app.state.intraday_aggregator is not None
             assert manager.stream is stream
             assert manager.wanted_provider is main._tracked_quote_subscriptions
+            assert callable(manager.handlers["on_quote_update"])
+            assert callable(manager.handlers["on_disconnect"])
 
     assert manager.cancelled is True
     engine.dispose.assert_awaited_once()
