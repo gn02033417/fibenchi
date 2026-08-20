@@ -140,6 +140,11 @@ export const api = {
       request<Group>("/groups", { method: "POST", body: JSON.stringify(data) }),
     update: (id: number, data: GroupUpdate) =>
       request<Group>(`/groups/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    setRealtimePriority: (id: number, realtimePriority: boolean) =>
+      request<Group>(`/groups/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ realtime_priority: realtimePriority }),
+      }),
     delete: (id: number) =>
       request<void>(`/groups/${id}`, { method: "DELETE" }),
     reorder: (groupIds: number[]) =>

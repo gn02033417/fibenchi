@@ -62,6 +62,22 @@ async def test_update_group(client):
     assert resp.json()["description"] == "Updated"
 
 
+async def test_realtime_priority_toggle_round_trips_through_group_api(client):
+    created = await client.post("/api/groups", json={"name": "Realtime"})
+    group_id = created.json()["id"]
+
+    enabled = await client.put(f"/api/groups/{group_id}", json={"realtime_priority": True})
+    assert enabled.status_code == 200
+    assert enabled.json()["realtime_priority"] is True
+
+    fetched = await client.get(f"/api/groups/{group_id}")
+    assert fetched.json()["realtime_priority"] is True
+
+    disabled = await client.put(f"/api/groups/{group_id}", json={"realtime_priority": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["realtime_priority"] is False
+
+
 async def test_delete_group(client):
     resp = await client.post("/api/groups", json={"name": "Tech"})
     gid = resp.json()["id"]

@@ -102,6 +102,7 @@ export interface Group {
   description: string | null
   icon: string | null
   is_default: boolean
+  realtime_priority: boolean
   position: number
   created_at: string
   assets: Asset[]
@@ -117,6 +118,7 @@ export interface GroupUpdate {
   name?: string
   description?: string
   icon?: string
+  realtime_priority?: boolean
 }
 
 export interface Price {

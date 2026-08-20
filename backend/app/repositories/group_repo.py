@@ -14,6 +14,15 @@ class GroupRepository:
         )
         return list(result.scalars().all())
 
+    async def list_realtime_priority_groups(self) -> list[Group]:
+        """Priority groups in the same stable order used by the UI."""
+        result = await self.db.execute(
+            select(Group)
+            .where(Group.realtime_priority.is_(True))
+            .order_by(Group.position, Group.name)
+        )
+        return list(result.scalars().all())
+
     async def get_default(self) -> Group | None:
         result = await self.db.execute(
             select(Group).where(Group.is_default.is_(True))

@@ -21,7 +21,7 @@ async def get_group_detail(db: AsyncSession, group_id: int):
     return await get_group(group_id, db)
 
 
-UPDATABLE_GROUP_FIELDS = {"name", "description", "icon"}
+UPDATABLE_GROUP_FIELDS = {"name", "description", "icon", "realtime_priority"}
 
 
 async def update_group(db: AsyncSession, group_id: int, data: dict):
