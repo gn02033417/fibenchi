@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, TypeVar
 
 import httpx
@@ -21,6 +21,7 @@ from pydantic import (
 from app.config import settings
 
 if TYPE_CHECKING:
+    from app.services.shioaji.kbars import MinuteBar
     from app.services.shioaji.quotes import ShioajiSnapshot
 
 
@@ -118,6 +119,7 @@ class ShioajiClient:
     INFO_PATH = "/api/v1/info"
     STREAM_STATUS_PATH = "/api/v1/stream/status"
     CONTRACTS_PATH = "/api/v1/data/contracts"
+    KBARS_PATH = "/api/v1/data/kbars"
     SNAPSHOTS_PATH = "/api/v1/data/snapshots"
 
     def __init__(
@@ -178,6 +180,27 @@ class ShioajiClient:
             payload={"contracts": [dict(contract) for contract in contracts]},
         )
         return response.snapshots
+
+    async def kbars(
+        self,
+        contract: Mapping[str, str],
+        *,
+        start: date,
+        end: date,
+    ) -> list["MinuteBar"]:
+        """Fetch and normalize one official Shioaji Kbars date range."""
+        from app.services.shioaji.kbars import ShioajiKbarsResponse
+
+        response = await self._post(
+            self.KBARS_PATH,
+            ShioajiKbarsResponse,
+            payload={
+                "contract": dict(contract),
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+            },
+        )
+        return response.minute_bars()
 
     async def _get(
         self,
