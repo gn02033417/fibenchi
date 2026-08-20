@@ -22,6 +22,10 @@ class LiveQuoteStore:
     def snapshot(self) -> dict[str, Quote]:
         return dict(self._quotes)
 
+    @property
+    def listener_count(self) -> int:
+        return len(self._listeners)
+
     @asynccontextmanager
     async def subscribe(self, *, max_queue_size: int = 64) -> AsyncIterator[asyncio.Queue[Quote]]:
         """Register one listener and yield its update queue until context exit."""
@@ -38,6 +42,8 @@ class LiveQuoteStore:
         """Store and publish the latest normalized quote for its symbol."""
         symbol = _normalize_symbol(quote.symbol)
         stored = quote.model_copy(update={"symbol": symbol})
+        if self._quotes.get(symbol) == stored:
+            return stored
         self._quotes[symbol] = stored
         self._publish(stored)
         return stored
@@ -61,6 +67,8 @@ class LiveQuoteStore:
                 if existing is not None
                 else Quote.placeholder(symbol, currency="TWD", data_status=status)
             )
+            if existing == stored:
+                continue
             self._quotes[symbol] = stored
             self._publish(stored)
 

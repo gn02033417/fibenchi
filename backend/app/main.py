@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,6 +11,8 @@ from starlette.responses import FileResponse
 from app.background_tasks import all_tasks, startup_warmup
 from app.config import settings as app_settings
 from app.database import async_session, engine
+from app.models.symbol_directory import TAIWAN_EXCHANGES
+from app.repositories.asset_repo import AssetRepository
 from app.routers import (
     annotations,
     assets,
@@ -34,8 +36,13 @@ from app.routers import (
     thesis,
 )
 from app.routers import settings as settings_router
+from app.services import quote_service
 from app.services.currency_service import load_cache as load_currency_cache
+from app.services.live_quote_store import LiveQuoteStore
 from app.services.price_providers import init_price_provider
+from app.services.realtime_priority import compute_wanted_symbols
+from app.services.shioaji.stream import ShioajiQuoteStream, ShioajiQuoteSubscription
+from app.services.subscription_manager import SubscriptionManager
 
 # App loggers write through the root logger, which neither uvicorn nor docker
 # configures — so every logger.info() (price heal, hole heal, refresh
@@ -50,6 +57,22 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
+
+
+async def _tracked_quote_subscriptions() -> list[ShioajiQuoteSubscription]:
+    """Build a deterministic Taiwan Quote subscription set from tracked assets."""
+    async with async_session() as db:
+        refs = await AssetRepository(db).list_in_any_group_refs()
+
+    subscriptions_by_symbol: dict[str, ShioajiQuoteSubscription] = {}
+    for ref in refs:
+        if ref.exchange not in TAIWAN_EXCHANGES:
+            continue
+        subscription = ShioajiQuoteSubscription(code=ref.symbol, exchange=ref.exchange)
+        subscriptions_by_symbol.setdefault(subscription.code, subscription)
+
+    wanted_symbols = compute_wanted_symbols(tracked_symbols=subscriptions_by_symbol)
+    return [subscriptions_by_symbol[symbol] for symbol in wanted_symbols]
 
 
 @asynccontextmanager
@@ -78,10 +101,21 @@ async def lifespan(app: FastAPI):
     # Kick off cache warmup in the background — API is reachable immediately,
     # cache builds in parallel so the first group hit is warm.
     warmup_task = asyncio.create_task(startup_warmup())
+    live_quote_store = LiveQuoteStore()
+    subscription_manager = SubscriptionManager(ShioajiQuoteStream(), live_quote_store)
+    quote_service.configure_live_quote_store(live_quote_store)
+    app.state.live_quote_store = live_quote_store
+    app.state.subscription_manager = subscription_manager
+    realtime_task = asyncio.create_task(
+        subscription_manager.run_forever(_tracked_quote_subscriptions)
+    )
 
     yield
 
+    realtime_task.cancel()
     warmup_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await realtime_task
     scheduler.shutdown(wait=False)
     await engine.dispose()
 
@@ -162,9 +196,8 @@ app = FastAPI(
             "name": "quotes",
             "description": (
                 "Real-time market quotes via REST and SSE. The REST endpoint returns quotes for "
-                "arbitrary symbols. The SSE stream pushes quotes for all grouped assets with delta "
-                "compression (only changed symbols are sent) and adaptive intervals: 15 s during "
-                "regular market hours, 60 s pre/post-market, 300 s when markets are closed."
+                "arbitrary symbols. The SSE stream pushes the shared Shioaji live quote state for "
+                "all grouped assets: an initial snapshot followed by delta-compressed changes."
             ),
         },
         {

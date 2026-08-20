@@ -1,4 +1,4 @@
-"""Unit tests for quote_service — REST parsing, SSE delta compression, adaptive intervals."""
+"""Unit tests for quote_service REST parsing and event-driven SSE output."""
 
 import asyncio
 import json
@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.domain import AssetRef
-from app.schemas.intraday import IntradayBar
 from app.schemas.quote import Quote
+from app.services.live_quote_store import LiveQuoteStore
 from app.services.quote_service import (
-    _reset_asset_list_cache,
+    configure_live_quote_store,
     get_quotes,
     quote_event_generator,
 )
@@ -18,28 +18,22 @@ from app.services.quote_service import (
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
-@pytest.fixture(autouse=True)
-def _clear_roster_cache():
-    """The roster cache is module state with a 30s TTL, so without this a test
-    silently inherits the previous test's symbols. Every test here used AAPL
-    until one didn't, and it failed only when run alongside the others."""
-    _reset_asset_list_cache()
-    yield
-    _reset_asset_list_cache()
+@pytest.fixture
+def live_store():
+    store = LiveQuoteStore()
+    configure_live_quote_store(store)
+    yield store
+    configure_live_quote_store(LiveQuoteStore())
 
 
-def _mock_provider(quotes_return=None, quotes_side_effect=None):
-    """Create a mock PriceProvider with async batch_fetch_quotes stub."""
+def _mock_provider(quotes_return=None):
     provider = MagicMock()
-    if quotes_side_effect is not None:
-        provider.batch_fetch_quotes = AsyncMock(side_effect=quotes_side_effect)
-    else:
-        provider.batch_fetch_quotes = AsyncMock(return_value=quotes_return or [])
+    provider.batch_fetch_quotes = AsyncMock(return_value=quotes_return or [])
     return provider
 
 
 async def test_get_quotes_parses_symbols():
-    mock_quotes = [Quote(**{"symbol": "AAPL", "price": 185.50})]
+    mock_quotes = [Quote(symbol="AAPL", price=185.50)]
     mock_prov = _mock_provider(quotes_return=mock_quotes)
     with patch("app.services.quote_service.get_price_provider", return_value=mock_prov):
         result = await get_quotes("AAPL,MSFT")
@@ -47,286 +41,81 @@ async def test_get_quotes_parses_symbols():
 
 
 async def test_get_quotes_uppercase_normalization():
-    mock_prov = _mock_provider(quotes_return=[])
+    mock_prov = _mock_provider()
     with patch("app.services.quote_service.get_price_provider", return_value=mock_prov):
         await get_quotes("aapl, msft")
     mock_prov.batch_fetch_quotes.assert_awaited_once_with(["AAPL", "MSFT"])
 
 
 async def test_get_quotes_empty_returns_empty():
-    result = await get_quotes("")
-    assert result == []
+    assert await get_quotes("") == []
 
 
-async def test_stream_emits_full_payload_first():
-    """First SSE event should contain all symbols (full payload)."""
-    mock_quotes = [
-        Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"}),
-    ]
-
-    call_count = 0
-    async def mock_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
-            raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_db = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    mock_prov = _mock_provider(quotes_return=mock_quotes)
+async def test_stream_emits_current_tracked_snapshot_without_provider_polling(live_store):
+    quote = Quote(symbol="2330", price=102, currency="TWD", data_status="LIVE")
+    await live_store.update(quote)
+    provider = _mock_provider([quote])
 
     with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=mock_prov),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", new_callable=AsyncMock, return_value={}),
+        patch(
+            "app.services.quote_service._tracked_asset_refs",
+            new=AsyncMock(return_value=[AssetRef("2330", 1, exchange="TSE")]),
+        ),
+        patch("app.services.quote_service.get_price_provider", return_value=provider),
     ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1)])
+        stream = quote_event_generator()
+        event = await anext(stream)
+        await stream.aclose()
 
-        events = []
-        async for event in quote_event_generator():
-            events.append(event)
-
-    quote_events = [e for e in events if e.startswith("event: quotes")]
-    assert len(quote_events) >= 1
-    data = json.loads(quote_events[0].split("data: ")[1].split("\n")[0])
-    assert "AAPL" in data
+    payload = json.loads(event.split("data: ", 1)[1])
+    assert payload["2330"]["price"] == 102
+    assert payload["2330"]["data_status"] == "LIVE"
+    provider.batch_fetch_quotes.assert_not_awaited()
 
 
-async def test_stream_delta_only_changed():
-    """After initial full payload, subsequent events only contain changed data."""
-    quote_v1 = [
-        Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"}),
-        Quote(**{"symbol": "MSFT", "price": 420.00, "market_state": "REGULAR"}),
-    ]
-    quote_v2 = [
-        Quote(**{"symbol": "AAPL", "price": 186.00, "market_state": "REGULAR"}),  # changed
-        Quote(**{"symbol": "MSFT", "price": 420.00, "market_state": "REGULAR"}),  # unchanged
-    ]
+async def test_stream_emits_only_changed_tracked_quotes_after_the_first_frame(live_store):
+    original = Quote(symbol="2330", price=100, currency="TWD", data_status="LIVE")
+    await live_store.update(original)
 
-    call_count = 0
-    async def mock_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 2:
-            raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_db = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    mock_prov = _mock_provider(quotes_side_effect=[quote_v1, quote_v2])
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=mock_prov),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", new_callable=AsyncMock, return_value={}),
+    with patch(
+        "app.services.quote_service._tracked_asset_refs",
+        new=AsyncMock(return_value=[AssetRef("2330", 1, exchange="TSE")]),
     ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1), AssetRef("MSFT", 2)])
+        stream = quote_event_generator()
+        _ = await anext(stream)
+        await live_store.update(original)
+        await live_store.update(Quote(symbol="0050", price=200, currency="TWD", data_status="LIVE"))
+        await live_store.update(Quote(symbol="2330", price=101, currency="TWD", data_status="LIVE"))
+        event = await asyncio.wait_for(anext(stream), timeout=0.1)
+        await stream.aclose()
 
-        events = []
-        async for event in quote_event_generator():
-            events.append(event)
-
-    quote_events = [e for e in events if e.startswith("event: quotes")]
-    assert len(quote_events) == 2
-    # Second event should only contain AAPL (MSFT unchanged)
-    data2 = json.loads(quote_events[1].split("data: ")[1].split("\n")[0])
-    assert "AAPL" in data2
-    assert "MSFT" not in data2
+    payload = json.loads(event.split("data: ", 1)[1])
+    assert payload == {"2330": payload["2330"]}
+    assert payload["2330"]["price"] == 101
 
 
-async def test_stream_intraday_event_serializes_bars():
-    """The ``intraday`` SSE event carries {symbol: [bar]} with the wire keys
-    time/price/volume/session (the frontend's ``IntradayPoint`` mirror).
-
-    Note the explicit subscription: bars are opt-in, so this test has to ask
-    for them the way a live view does.
-    """
-    mock_quotes = [Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"})]
-    bars = {
-        "AAPL": [
-            IntradayBar(time=1771000000, price=185.5, volume=1200, session="regular"),
-            IntradayBar(time=1771000060, price=185.6, volume=800, session="regular"),
-        ]
-    }
-
-    async def mock_sleep(seconds):
-        raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_db = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    mock_prov = _mock_provider(quotes_return=mock_quotes)
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=mock_prov),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", new_callable=AsyncMock, return_value=bars),
+async def test_stream_initial_frame_contains_disconnected_placeholders_for_tracked_symbols(live_store):
+    with patch(
+        "app.services.quote_service._tracked_asset_refs",
+        new=AsyncMock(return_value=[AssetRef("0050", 1, exchange="TSE")]),
     ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1)])
+        stream = quote_event_generator()
+        event = await anext(stream)
+        await stream.aclose()
 
-        events = []
-        async for event in quote_event_generator(frozenset({"AAPL"})):
-            events.append(event)
-
-    intraday_events = [e for e in events if e.startswith("event: intraday")]
-    assert len(intraday_events) == 1
-    data = json.loads(intraday_events[0].split("data: ")[1].split("\n")[0])
-    assert data == {
-        "AAPL": [
-            {"time": 1771000000, "price": 185.5, "volume": 1200, "session": "regular"},
-            {"time": 1771000060, "price": 185.6, "volume": 800, "session": "regular"},
-        ]
-    }
+    payload = json.loads(event.split("data: ", 1)[1])
+    assert payload["0050"]["price"] is None
+    assert payload["0050"]["data_status"] == "DISCONNECTED"
 
 
-async def test_stream_without_subscription_sends_no_intraday():
-    """No subscription means silence, not everything.
-
-    The whole saving in #621 rests on this default: the board, the group table
-    and every other view hold this stream without drawing a single bar, and
-    used to be sent 738 KiB anyway.
-    """
-    mock_quotes = [Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"})]
-    bars_call = AsyncMock(return_value={"AAPL": [
-        IntradayBar(time=1771000000, price=185.5, volume=1200, session="regular"),
-    ]})
-
-    async def mock_sleep(seconds):
-        raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=_mock_provider(mock_quotes)),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", bars_call),
+async def test_stream_cancellation_unregisters_store_listener(live_store):
+    with patch(
+        "app.services.quote_service._tracked_asset_refs",
+        new=AsyncMock(return_value=[]),
     ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1)])
+        stream = quote_event_generator()
+        _ = await anext(stream)
+        assert live_store.listener_count == 1
+        await stream.aclose()
 
-        events = [e async for e in quote_event_generator()]
-
-    assert not [e for e in events if e.startswith("event: intraday")]
-    # Not merely filtered out of the payload — never read from the DB.
-    bars_call.assert_not_awaited()
-    # Quotes still flow: this is scoping intraday, not muting the stream.
-    assert [e for e in events if e.startswith("event: quotes")]
-
-
-async def test_stream_intraday_scoped_to_subscribed_symbols():
-    """A subscription for one symbol must not drag the rest of the roster along."""
-    mock_quotes = [
-        Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"}),
-        Quote(**{"symbol": "MSFT", "price": 420.00, "market_state": "REGULAR"}),
-    ]
-    seen_refs: list[list[AssetRef]] = []
-
-    async def capture_bars(db, refs):
-        seen_refs.append(list(refs))
-        return {}
-
-    async def mock_sleep(seconds):
-        raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=_mock_provider(mock_quotes)),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", capture_bars),
-    ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(
-            return_value=[AssetRef("AAPL", 1), AssetRef("MSFT", 2)]
-        )
-
-        async for _ in quote_event_generator(frozenset({"MSFT"})):
-            pass
-
-    assert seen_refs == [[AssetRef("MSFT", 2)]]
-
-
-async def test_stream_adaptive_interval_regular():
-    """During regular market hours, interval should be 15 seconds."""
-    mock_quotes = [Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "REGULAR"})]
-
-    sleep_intervals = []
-    async def mock_sleep(seconds):
-        sleep_intervals.append(seconds)
-        raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_db = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    mock_prov = _mock_provider(quotes_return=mock_quotes)
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=mock_prov),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", new_callable=AsyncMock, return_value={}),
-        # Pin the venue schedule: the real hint is wall-clock dependent and
-        # caps the sleep to "seconds until the next bell" near an open.
-        patch("app.services.quote_service.schedule_poll_hint", return_value=("open", None)),
-    ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1)])
-        async for _ in quote_event_generator():
-            pass
-
-    assert sleep_intervals[0] == 15
-
-
-async def test_stream_adaptive_interval_closed():
-    """When market is closed, interval should be 300 seconds."""
-    mock_quotes = [Quote(**{"symbol": "AAPL", "price": 185.50, "market_state": "CLOSED"})]
-
-    sleep_intervals = []
-    async def mock_sleep(seconds):
-        sleep_intervals.append(seconds)
-        raise asyncio.CancelledError()
-
-    mock_session_ctx = AsyncMock()
-    mock_db = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    mock_prov = _mock_provider(quotes_return=mock_quotes)
-
-    with (
-        patch("app.services.quote_service.async_session", return_value=mock_session_ctx),
-        patch("app.services.quote_service.AssetRepository") as MockRepo,
-        patch("app.services.quote_service.get_price_provider", return_value=mock_prov),
-        patch("app.services.quote_service.asyncio.sleep", side_effect=mock_sleep),
-        patch("app.services.quote_service.get_intraday_bars", new_callable=AsyncMock, return_value={}),
-        # Pin the venue schedule: the real hint is wall-clock dependent and
-        # caps the sleep to "seconds until the next bell" near an open —
-        # this test failed for 5 real-world minutes before every NYSE open.
-        patch("app.services.quote_service.schedule_poll_hint", return_value=("closed", None)),
-    ):
-        MockRepo.return_value.list_in_any_group_refs = AsyncMock(return_value=[AssetRef("AAPL", 1)])
-        async for _ in quote_event_generator():
-            pass
-
-    assert sleep_intervals[0] == 300
+    assert live_store.listener_count == 0
