@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-quer
 import { useCallback, useMemo } from "react"
 import { api } from "../api"
 import { resolveWindow, type AssetWindow } from "../asset-window"
-import { keys, STALE_5MIN, STALE_24H, useInvalidatingMutation } from "./shared"
+import { keys, STALE_5MIN, useInvalidatingMutation } from "./shared"
 
 export function useAssetDetail(symbol: string, period?: string, opts?: { enabled?: boolean }) {
   return useQuery({
@@ -43,24 +43,6 @@ export function useAssetWindow(symbol: string, assetWindow: AssetWindow, opts?: 
   )
   const windowEmpty = !!query.data?.prices?.length && !prices?.length
   return { ...query, prices, indicators, fetchPeriod, windowLabel: label, windowEmpty }
-}
-
-export function useEtfHoldings(symbol: string, enabled: boolean) {
-  return useQuery({
-    queryKey: keys.etfHoldings(symbol),
-    queryFn: () => api.prices.holdings(symbol),
-    enabled: !!symbol && enabled,
-    staleTime: STALE_24H, // cache 24h — holdings don't change often
-  })
-}
-
-export function useHoldingsIndicators(symbol: string, enabled: boolean) {
-  return useQuery({
-    queryKey: keys.holdingsIndicators(symbol),
-    queryFn: () => api.prices.holdingsIndicators(symbol),
-    enabled: !!symbol && enabled,
-    staleTime: STALE_5MIN, // cache 5 min
-  })
 }
 
 export function useRefreshPrices(symbol: string) {

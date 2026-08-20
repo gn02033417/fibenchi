@@ -10,6 +10,7 @@ import { formatDeltaAnnotation } from "@/lib/indicator-registry"
 import { marketState } from "@/lib/market-state"
 import { ChangePct } from "@/components/change-pct"
 import { IntradayChart } from "@/components/chart/intraday-chart"
+import { QuoteFreshness } from "@/components/quote-freshness"
 
 const DELTA_FIELDS = ["rsi", "macd_hist", "atr", "adx"] as const
 
@@ -94,8 +95,9 @@ const LiveCard = memo(function LiveCard({
             )}
           </div>
         </div>
-        <div className="text-xs text-muted-foreground">
-          {marketLabel}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>{marketLabel}</span>
+          <QuoteFreshness quote={quote} />
         </div>
       </div>
 

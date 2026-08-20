@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
 from app.background_tasks import all_tasks
 from app.background_tasks.jobs import _refresh_trigger
@@ -18,23 +17,19 @@ class TestRegistry:
         ids = {t.id for t in all_tasks()}
         assert ids == {
             "price_refresh",
-            "price_refresh_supplemental",
             "symbol_directory_sync",
             "taiwan_symbol_directory_sync",
-            "intraday_sync",
-            "price_heal",
         }
 
     async def test_duplicate_id_rejected(self):
-        with pytest.raises(ValueError, match="price_heal"):
-            @background_task("price_heal", trigger=IntervalTrigger(minutes=1))
+        with pytest.raises(ValueError, match="price_refresh"):
+            @background_task("price_refresh", trigger=None)
             async def _clashing():
                 pass
 
     async def test_static_triggers_resolve_to_themselves(self):
         by_id = {t.id: t for t in all_tasks()}
-        assert isinstance(by_id["intraday_sync"].resolve_trigger(), IntervalTrigger)
-        assert isinstance(by_id["price_refresh_supplemental"].resolve_trigger(), CronTrigger)
+        assert isinstance(by_id["symbol_directory_sync"].resolve_trigger(), CronTrigger)
 
 
 class TestRefreshTrigger:

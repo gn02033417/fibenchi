@@ -17,6 +17,7 @@
 // board renders, and hovering must stay free.
 
 import type { SparklinePoint } from "@/lib/api"
+import { QuoteFreshness } from "@/components/quote-freshness"
 import { changeColor, formatAssetPrice, formatChangePct } from "@/lib/format"
 import { rampColor, PCT_WINDOWS, type ColorMode } from "./color-scale"
 import { BELL_VERB, PHASE_LABEL, countdown } from "./bell"
@@ -136,6 +137,7 @@ export function TileTooltip({ tile, mode, span }: { tile: Tile; mode: ColorMode;
               {formatAssetPrice(tile.price, tile.asset)}
             </span>
           )}
+          <QuoteFreshness quote={tile} />
           {/* Everything that isn't warmup — feed_behind, gap, unknown — lands
               here as a plain em dash. All three resolve to the same user
               action, so they get the same shape and no prose. */}

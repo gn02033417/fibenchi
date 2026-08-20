@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { ArrowLeft, ExternalLink, RefreshCw, Plus, FolderPlus } from "lucide-react"
+import { ArrowLeft, RefreshCw, Plus, FolderPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -12,10 +12,11 @@ import { WindowSelector } from "@/components/assets/window-selector"
 import { resolveWindow, type AssetWindow } from "@/lib/asset-window"
 import { MarketStatusDot } from "@/components/market-status-dot"
 import { resolveIcon } from "@/lib/icon-utils"
-import { buildYahooFinanceUrl, buildYahooQuoteUrl, formatAssetPriceWithSettings } from "@/lib/format"
+import { formatAssetPriceWithSettings } from "@/lib/format"
 import { ChangePct } from "@/components/change-pct"
+import { QuoteFreshness } from "@/components/quote-freshness"
 import type { Asset } from "@/lib/api"
-import { useQuote } from "@/lib/quote-stream"
+import { useActiveAssetDemand, useQuote } from "@/lib/quote-stream"
 import { usePriceFlash } from "@/lib/use-price-flash"
 import { useRefreshPrices, useCreateAsset, useGroups, useAddAssetsToGroup } from "@/lib/queries"
 import { useSettings } from "@/lib/settings"
@@ -47,6 +48,7 @@ export function Header({
   const createAsset = useCreateAsset()
   const { data: groups } = useGroups()
   const addToGroup = useAddAssetsToGroup()
+  useActiveAssetDemand(isTracked ? symbol : undefined)
   const quote = useQuote(symbol.toUpperCase())
   const price = quote?.price ?? null
   const changePct = quote?.change_percent ?? null
@@ -89,16 +91,7 @@ export function Header({
             className="text-sm font-medium rounded px-1"
           />
         )}
-        <a
-          href={settings.yahoo_link_mode === "quote" ? buildYahooQuoteUrl(symbol) : buildYahooFinanceUrl(symbol)}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="View on Yahoo Finance"
-        >
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <ExternalLink className="h-4 w-4 text-muted-foreground" />
-          </Button>
-        </a>
+        <QuoteFreshness quote={quote} />
         {!isTracked && (
           <Button
             variant="outline"

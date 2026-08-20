@@ -28,6 +28,21 @@ async def test_list_all_includes_default_group(db):
     assert result[0].is_default is True
 
 
+async def test_list_realtime_priority_groups_uses_stable_group_order(db):
+    repo = GroupRepository(db)
+    later = await repo.create(name="Later", description=None)
+    earlier = await repo.create(name="Earlier", description=None)
+    later.realtime_priority = True
+    later.position = 2
+    earlier.realtime_priority = True
+    earlier.position = 1
+    await repo.save_all()
+
+    result = await repo.list_realtime_priority_groups()
+
+    assert [group.name for group in result] == ["Earlier", "Later"]
+
+
 async def test_get_by_id_found(db):
     repo = GroupRepository(db)
     created = await repo.create(name="Tech Stocks", description="Technology sector")

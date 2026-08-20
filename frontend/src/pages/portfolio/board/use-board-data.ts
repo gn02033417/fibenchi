@@ -6,7 +6,7 @@
 // never disagree with the table about the same asset.
 
 import { useMemo } from "react"
-import { type Asset, type SparklinePoint } from "@/lib/api"
+import { type Asset, type Quote, type SparklinePoint } from "@/lib/api"
 import {
   useDataHealth,
   useGroups,
@@ -55,6 +55,9 @@ export interface Tile {
   todayPct: number | null
   /** Last price — the magnitude behind the dimensionless σ (tooltip). */
   price: number | null
+  /** Freshness metadata for the tooltip price. */
+  data_status: Quote["data_status"]
+  updated_at: Quote["updated_at"]
   /** % change over each board window (from the shared 1mo series). */
   windowPct: Record<PctWindow, number | null>
   /** The 1mo close series the windows were derived from (tooltip sparkline). */
@@ -224,6 +227,8 @@ export function useBoardData(groupBy: GroupBy) {
         reason,
         todayPct: quote?.change_percent ?? snap?.change_pct ?? null,
         price: quote?.price ?? snap?.close ?? null,
+        data_status: quote?.data_status ?? null,
+        updated_at: quote?.updated_at ?? null,
         windowPct: windowReturns[symbol] ?? EMPTY_WINDOWS,
         spark: series?.[symbol] ?? [],
         sections: sectionsBySymbol[symbol] ?? [],

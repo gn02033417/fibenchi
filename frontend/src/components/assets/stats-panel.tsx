@@ -38,7 +38,7 @@ export function StatsPanel({ indicators, indicatorVisibility, currency, quote }:
     )
     const groups = new Map<IndicatorCategory, IndicatorDescriptor[]>()
     for (const desc of visible) {
-      // Hide indicators whose primary field has no data (e.g. fundamentals for ETFs)
+      // Hide indicators whose primary field has no data.
       const mainField = desc.series[0]?.field ?? desc.fields[0]
       if (latestValues && latestValues[mainField] == null) continue
       const list = groups.get(desc.category) ?? []

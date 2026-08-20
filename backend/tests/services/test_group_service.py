@@ -24,6 +24,7 @@ def _make_group(id: int = 1, name: str = "Tech", description: str = "Tech stocks
     group.name = name
     group.description = description
     group.is_default = is_default
+    group.realtime_priority = False
     group.assets = []
     return group
 
@@ -117,6 +118,20 @@ async def test_update_group_patches_both_fields(MockRepo):
 
     assert group.name == "New"
     assert group.description == "New desc"
+
+
+@patch("app.services.group_service.GroupRepository")
+async def test_update_group_sets_realtime_priority(MockRepo):
+    db = AsyncMock()
+    group = _make_group()
+    mock_repo = MockRepo.return_value
+    mock_repo.save = AsyncMock(return_value=group)
+
+    with patch(_PATCH_GET_GROUP, new_callable=AsyncMock, return_value=group):
+        await update_group(db, group_id=1, data={"realtime_priority": True})
+
+    assert group.realtime_priority is True
+    mock_repo.save.assert_awaited_once_with(group)
 
 
 @patch("app.services.group_service.AssetRepository")

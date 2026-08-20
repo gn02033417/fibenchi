@@ -11,11 +11,10 @@
 
 export type IndicatorPlacement = "overlay" | "subchart" | "card"
 
-export type IndicatorCategory = "technical" | "volatility" | "fundamentals" | "market_data"
+export type IndicatorCategory = "technical" | "volatility" | "market_data"
 
-export const CATEGORY_ORDER: IndicatorCategory[] = ["fundamentals", "market_data", "technical", "volatility"]
+export const CATEGORY_ORDER: IndicatorCategory[] = ["market_data", "technical", "volatility"]
 export const CATEGORY_LABELS: Record<IndicatorCategory, string> = {
-  fundamentals: "Fundamentals",
   market_data: "Market Data",
   technical: "Technical",
   volatility: "Volatility",

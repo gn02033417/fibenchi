@@ -11,6 +11,7 @@ import { ExpandedAssetChart } from "@/components/chart/expanded-asset-chart"
 import type { Asset, Quote, IndicatorSummary } from "@/lib/api"
 import { formatAssetPriceWithSettings, formatCompactNumber, readableTextColor } from "@/lib/format"
 import { ChangePct } from "@/components/change-pct"
+import { QuoteFreshness } from "@/components/quote-freshness"
 import {
   getNumericValue,
   extractMacdValues,
@@ -208,17 +209,20 @@ export const TableRow = memo(function TableRow({
           )}
           {isColumnVisible(columnSettings, "price") && (
             <td className={`${py} px-3 text-right tabular-nums`}>
-              {priceFmt ? (
-                <span
-                  ref={priceRef}
-                  className={`font-medium rounded px-1 -mx-1 ${staleClass}`}
-                  title={priceFmt.title}
-                >
-                  {priceFmt.text}
-                </span>
-              ) : (
-                <Skeleton className="h-4 w-14 ml-auto rounded" />
-              )}
+              <div className="flex items-center justify-end gap-2">
+                <QuoteFreshness quote={quote} />
+                {priceFmt ? (
+                  <span
+                    ref={priceRef}
+                    className={`font-medium rounded px-1 -mx-1 ${staleClass}`}
+                    title={priceFmt.title}
+                  >
+                    {priceFmt.text}
+                  </span>
+                ) : (
+                  <Skeleton className="h-4 w-14 rounded" />
+                )}
+              </div>
             </td>
           )}
           {isColumnVisible(columnSettings, "change_pct") && (

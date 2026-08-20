@@ -87,4 +87,3 @@ def downgrade() -> None:
     # Raw symbols do not carry enough information to reconstruct whether the
     # original suffix was .TW or .TWO. The migration is intentionally forward-only.
     pass
-

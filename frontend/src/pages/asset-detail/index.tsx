@@ -20,8 +20,6 @@ import { StatsPanel } from "@/components/assets/stats-panel"
 import { Header, type ChartMode } from "./header"
 import { ChartSection } from "./chart-section"
 import { MovementStats } from "./movement-stats"
-import { EarningsCountdown } from "@/components/assets/earnings-countdown"
-import { HoldingsSection } from "./holdings-section"
 
 
 export function AssetDetailPage() {
@@ -39,7 +37,6 @@ export function AssetDetailPage() {
   })
   const quote = useQuote(symbol?.toUpperCase() ?? "")
   const isTracked = !!asset
-  const isEtf = asset?.type === "etf"
 
   if (!symbol) return null
 
@@ -71,8 +68,6 @@ export function AssetDetailPage() {
           quote={quote}
         />
       )}
-      {!isEtf && <EarningsCountdown symbol={symbol} />}
-      {isEtf && <HoldingsSection symbol={symbol} />}
       {isTracked && (
         <>
           <TagInput symbol={symbol} currentTags={asset?.tags ?? []} />

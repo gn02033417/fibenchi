@@ -15,6 +15,10 @@ class GroupUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=100, description="New group name")
     description: str | None = Field(default=None, max_length=500, description="New description")
     icon: str | None = Field(default=None, max_length=50, description="Lucide icon name")
+    realtime_priority: bool | None = Field(
+        default=None,
+        description="Whether assets in this group receive realtime priority",
+    )
 
 
 class GroupReorder(BaseModel):

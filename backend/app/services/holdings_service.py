@@ -1,40 +1,16 @@
-"""Holdings business logic — ETF top-holdings and per-holding indicators."""
+"""Disabled ETF holdings seam for the pure Taiwan build."""
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.price import SymbolIndicatorSnapshot
-from app.services.compute.indicators import compute_batch_indicator_snapshots
-from app.services.entity_lookups import get_asset
-from app.services.fundamentals_cache import merge_fundamentals_into_batch
-from app.services.yahoo import yahoo_client
+_DISABLED_DETAIL = "ETF holdings are not enabled in the Taiwan build"
 
 
 async def get_holdings(db: AsyncSession, symbol: str) -> dict:
-    """Return the top holdings and sector weightings for an ETF."""
-    asset = await get_asset(symbol, db)
-    if asset.type.value != "etf":
-        raise HTTPException(400, f"{symbol} is not an ETF")
-    data = await yahoo_client.holdings(symbol)
-    if not data:
-        raise HTTPException(404, f"No holdings data for {symbol}")
-    return data
+    """Raise a stable response for the intentionally disabled feature."""
+    raise HTTPException(status_code=410, detail=_DISABLED_DETAIL)
 
 
-async def get_holdings_indicators(db: AsyncSession, symbol: str) -> list[SymbolIndicatorSnapshot]:
-    """Return latest indicator snapshot for each of the ETF's top holdings."""
-    asset = await get_asset(symbol, db)
-    if asset.type.value != "etf":
-        raise HTTPException(400, f"{symbol} is not an ETF")
-
-    data = await yahoo_client.holdings(symbol)
-    if not data:
-        raise HTTPException(404, f"No holdings data for {symbol}")
-
-    holding_symbols = [h["symbol"] for h in data["top_holdings"] if h["symbol"]]
-    if not holding_symbols:
-        return []
-
-    results = await compute_batch_indicator_snapshots(holding_symbols)
-    merge_fundamentals_into_batch(results)
-    return results
+async def get_holdings_indicators(db: AsyncSession, symbol: str) -> list:
+    """Raise a stable response for the intentionally disabled feature."""
+    raise HTTPException(status_code=410, detail=_DISABLED_DETAIL)

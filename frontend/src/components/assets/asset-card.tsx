@@ -14,6 +14,7 @@ import { TagBadge } from "@/components/tags/tag-badge"
 import type { Asset, Quote, SparklinePoint, IndicatorSummary } from "@/lib/api"
 import { formatAssetPriceWithSettings } from "@/lib/format"
 import { ChangePct } from "@/components/change-pct"
+import { QuoteFreshness } from "@/components/quote-freshness"
 import { getCardDescriptors, isVisibleAt, type IndicatorDescriptor, type Placement } from "@/lib/indicator-registry"
 import { IndicatorValue } from "@/components/indicators/indicator-value"
 import { usePriceFlash } from "@/lib/use-price-flash"
@@ -101,17 +102,20 @@ export const AssetCard = memo(function AssetCard({
                 <Badge variant="secondary" className="text-xs">
                   {type}
                 </Badge>
-                {priceFmt ? (
-                  <span
-                    ref={priceRef}
-                    className="ml-auto text-base font-semibold tabular-nums rounded px-1 -mx-1"
-                    title={priceFmt.title}
-                  >
-                    {priceFmt.text}
-                  </span>
-                ) : (
-                  <Skeleton className="ml-auto h-5 w-16 rounded" />
-                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <QuoteFreshness quote={quote} />
+                  {priceFmt ? (
+                    <span
+                      ref={priceRef}
+                      className="text-base font-semibold tabular-nums rounded px-1 -mx-1"
+                      title={priceFmt.title}
+                    >
+                      {priceFmt.text}
+                    </span>
+                  ) : (
+                    <Skeleton className="h-5 w-16 rounded" />
+                  )}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <p className="text-xs text-muted-foreground truncate">{name}</p>

@@ -102,6 +102,7 @@ export interface Group {
   description: string | null
   icon: string | null
   is_default: boolean
+  realtime_priority: boolean
   position: number
   created_at: string
   assets: Asset[]
@@ -117,6 +118,7 @@ export interface GroupUpdate {
   name?: string
   description?: string
   icon?: string
+  realtime_priority?: boolean
 }
 
 export interface Price {
@@ -207,31 +209,6 @@ export interface ThesisPerformanceSeries {
 export interface SyncResult {
   symbol: string
   synced: number
-}
-
-export interface Holding {
-  symbol: string
-  name: string
-  percent: number
-}
-
-export interface SectorWeighting {
-  sector: string
-  percent: number
-}
-
-export interface EtfHoldings {
-  top_holdings: Holding[]
-  sector_weightings: SectorWeighting[]
-  total_percent: number
-}
-
-export interface HoldingIndicator {
-  symbol: string
-  currency: string
-  close: number | null
-  change_pct: number | null
-  values: Record<string, number | string | null>
 }
 
 export interface PortfolioIndex {
@@ -368,12 +345,6 @@ export interface IntradayPoint {
   session: "pre" | "regular" | "post"
 }
 
-export interface EarningsInfo {
-  earnings_date: string | null
-  is_estimate: boolean
-  last_reported_date: string | null
-}
-
 // --- System / data health ---
 
 export interface HoleSymbol {
@@ -428,7 +399,7 @@ export interface OrphanAsset {
   symbol: string
   name: string
   type: string
-  /** stored daily bars that would be deleted with it — re-fetchable from Yahoo */
+  /** stored daily bars that would be deleted with it — re-fetchable from the configured provider */
   price_bars: number
   latest_bar: string | null
   /** hand-written chart annotations that would be deleted with it — not re-fetchable */

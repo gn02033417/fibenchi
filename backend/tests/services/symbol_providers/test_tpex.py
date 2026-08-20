@@ -123,4 +123,3 @@ def test_tpex_provider_is_registered():
     assert isinstance(get_provider("tpex"), TPEXProvider)
     providers = get_available_providers()
     assert providers["tpex"]["markets"] == [{"key": "otc", "label": "Taipei Exchange (OTC)"}]
-

@@ -64,13 +64,3 @@ export function useLocalSearch(query: string) {
     placeholderData: keepPreviousData,
   })
 }
-
-export function useYahooSearch(query: string) {
-  return useQuery<SymbolSearchResult[]>({
-    queryKey: keys.symbolSearchYahoo(query),
-    queryFn: () => api.searchYahoo(query),
-    enabled: query.length >= 1,
-    staleTime: STALE_1MIN,
-    placeholderData: keepPreviousData,
-  })
-}

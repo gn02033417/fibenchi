@@ -19,10 +19,19 @@ from app.services.shioaji.contracts import (
     TaiwanContract,
     fetch_stk_contracts,
 )
+from app.services.shioaji.kbars import MinuteBar, ShioajiKbarsResponse
 from app.services.shioaji.quotes import (
     ShioajiSnapshot,
     ShioajiSnapshotsResponse,
     map_snapshot_to_quote,
+)
+from app.services.shioaji.stream import (
+    ShioajiQuoteEvent,
+    ShioajiQuoteStream,
+    ShioajiQuoteSubscription,
+    ShioajiQuoteUpdate,
+    map_quote_event_to_quote,
+    map_quote_event_to_update,
 )
 
 __all__ = [
@@ -41,7 +50,15 @@ __all__ = [
     "ShioajiUnavailableError",
     "TaiwanContract",
     "fetch_stk_contracts",
+    "MinuteBar",
+    "ShioajiKbarsResponse",
     "ShioajiSnapshot",
     "ShioajiSnapshotsResponse",
     "map_snapshot_to_quote",
+    "ShioajiQuoteEvent",
+    "ShioajiQuoteUpdate",
+    "ShioajiQuoteStream",
+    "ShioajiQuoteSubscription",
+    "map_quote_event_to_update",
+    "map_quote_event_to_quote",
 ]

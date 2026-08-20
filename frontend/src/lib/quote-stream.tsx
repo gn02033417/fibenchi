@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import type { Quote } from "./api"
 import type { IntradayPoint } from "./types"
+import { buildQuoteStreamUrl } from "./quote-stream-url"
 
 type QuoteMap = Record<string, Quote>
 type IntradayMap = Record<string, IntradayPoint[]>
@@ -77,6 +78,10 @@ interface QuoteStreamState {
   /** Declare that a mounted component will draw bars for these symbols.
    *  Returns an unsubscribe. See `useIntradaySubscription`. */
   subscribeIntraday: (symbols: string[]) => () => void
+  /** Raise symbols shown in asset detail views within the shared subscription pool. */
+  subscribeActiveAsset: (symbol: string) => () => void
+  /** Raise assets in visible group views within the shared subscription pool. */
+  subscribeActiveGroup: (groupId: number) => () => void
 }
 
 const defaultStore = new QuoteStore()
@@ -85,6 +90,8 @@ const QuoteStreamContext = createContext<QuoteStreamState>({
   intraday: {},
   status: "connecting",
   subscribeIntraday: () => () => {},
+  subscribeActiveAsset: () => () => {},
+  subscribeActiveGroup: () => () => {},
 })
 
 /** How long to wait after the demand set changes before reconnecting.
@@ -104,42 +111,64 @@ export function QuoteStreamProvider({ children }: { children: React.ReactNode })
   // Who currently wants bars, and for what. Keyed by an identity token per
   // subscriber so two views asking for the same symbol both have to leave
   // before it drops out of the union.
-  const demands = useRef(new Map<symbol, string[]>())
+  const intradayDemands = useRef(new Map<symbol, string[]>())
+  const activeAssetDemands = useRef(new Map<symbol, string>())
+  const activeGroupDemands = useRef(new Map<symbol, number>())
   const demandTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // The `intraday=` query param, and the effect dependency that reopens the
-  // stream when it changes. Sorted so an unchanged set can't reorder into a
-  // different string and trigger a pointless reconnect.
-  const [intradayParam, setIntradayParam] = useState("")
+  // The query includes intraday bars and active-view priority demand. It is
+  // sorted so an unchanged set cannot cause a pointless reconnect.
+  const [streamUrl, setStreamUrl] = useState("/api/quotes/stream")
+
+  const scheduleDemandRefresh = useCallback(() => {
+    if (demandTimer.current) clearTimeout(demandTimer.current)
+    demandTimer.current = setTimeout(() => {
+      const intraday = [...intradayDemands.current.values()].flat()
+      const activeAssets = activeAssetDemands.current.values()
+      const activeGroupIds = activeGroupDemands.current.values()
+      const nextUrl = buildQuoteStreamUrl({ intradaySymbols: intraday, activeAssets, activeGroupIds })
+      setStreamUrl((currentUrl) => currentUrl === nextUrl ? currentUrl : nextUrl)
+    }, RESUBSCRIBE_DEBOUNCE_MS)
+  }, [])
 
   const subscribeIntraday = useCallback((symbols: string[]) => {
     const token = Symbol("intraday-demand")
-    const recompute = () => {
-      if (demandTimer.current) clearTimeout(demandTimer.current)
-      demandTimer.current = setTimeout(() => {
-        const union = new Set<string>()
-        for (const list of demands.current.values()) {
-          for (const s of list) union.add(s.toUpperCase())
-        }
-        setIntradayParam([...union].sort().join(","))
-      }, RESUBSCRIBE_DEBOUNCE_MS)
-    }
-    demands.current.set(token, symbols)
-    recompute()
+    intradayDemands.current.set(token, symbols)
+    scheduleDemandRefresh()
     return () => {
-      demands.current.delete(token)
-      recompute()
+      intradayDemands.current.delete(token)
+      scheduleDemandRefresh()
     }
-  }, [])
+  }, [scheduleDemandRefresh])
+
+  const subscribeActiveAsset = useCallback((symbol: string) => {
+    const normalized = symbol.trim().toUpperCase()
+    if (!normalized) return () => {}
+    const token = Symbol("active-asset-demand")
+    activeAssetDemands.current.set(token, normalized)
+    scheduleDemandRefresh()
+    return () => {
+      activeAssetDemands.current.delete(token)
+      scheduleDemandRefresh()
+    }
+  }, [scheduleDemandRefresh])
+
+  const subscribeActiveGroup = useCallback((groupId: number) => {
+    if (!Number.isInteger(groupId) || groupId <= 0) return () => {}
+    const token = Symbol("active-group-demand")
+    activeGroupDemands.current.set(token, groupId)
+    scheduleDemandRefresh()
+    return () => {
+      activeGroupDemands.current.delete(token)
+      scheduleDemandRefresh()
+    }
+  }, [scheduleDemandRefresh])
 
   useEffect(() => {
     mountedRef.current = true
 
     function connect() {
       if (!mountedRef.current) return
-      const url = intradayParam
-        ? `/api/quotes/stream?intraday=${encodeURIComponent(intradayParam)}`
-        : "/api/quotes/stream"
-      const es = new EventSource(url)
+      const es = new EventSource(streamUrl)
       esRef.current = es
 
       es.addEventListener("quotes", (e) => {
@@ -224,15 +253,22 @@ export function QuoteStreamProvider({ children }: { children: React.ReactNode })
       esRef.current?.close()
       esRef.current = null
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      if (demandTimer.current) clearTimeout(demandTimer.current)
     }
-    // intradayParam: a changed selection reopens the stream, which is how the
-    // server learns about it. Quotes survive that — the new connection's first
-    // push is a full payload and QuoteStore.merge keeps the previous values,
-    // so nothing on screen blanks.
-  }, [storeRef, intradayParam])
+    // A changed demand reopens the stream, which is how the server learns
+    // about it. Quotes survive that — the new connection's first push is a
+    // full payload and QuoteStore.merge keeps previous values on screen.
+  }, [storeRef, streamUrl])
 
   return (
-    <QuoteStreamContext.Provider value={{ store: storeRef, intraday, status, subscribeIntraday }}>
+    <QuoteStreamContext.Provider value={{
+      store: storeRef,
+      intraday,
+      status,
+      subscribeIntraday,
+      subscribeActiveAsset,
+      subscribeActiveGroup,
+    }}>
       {children}
     </QuoteStreamContext.Provider>
   )
@@ -290,6 +326,28 @@ export function useIntradaySubscription(symbols: string[]): void {
     () => subscribeIntraday(key ? key.split(",") : []),
     [subscribeIntraday, key],
   )
+}
+
+/** Keep an asset detail's symbol at the top of the shared realtime pool while mounted. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useActiveAssetDemand(symbol?: string): void {
+  const { subscribeActiveAsset } = useContext(QuoteStreamContext)
+  const normalized = symbol?.trim().toUpperCase() ?? ""
+  useEffect(() => {
+    if (!normalized) return undefined
+    return subscribeActiveAsset(normalized)
+  }, [normalized, subscribeActiveAsset])
+}
+
+/** Keep an active group's symbols in the shared realtime pool while mounted. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useActiveGroupDemand(groupId?: number): void {
+  const { subscribeActiveGroup } = useContext(QuoteStreamContext)
+  const validGroupId = Number.isInteger(groupId) && groupId && groupId > 0 ? groupId : undefined
+  useEffect(() => {
+    if (validGroupId == null) return undefined
+    return subscribeActiveGroup(validGroupId)
+  }, [subscribeActiveGroup, validGroupId])
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

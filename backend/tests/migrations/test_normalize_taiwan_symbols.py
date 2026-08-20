@@ -177,4 +177,3 @@ def test_0022_alembic_migration_updates_rows_in_place():
         assert [(row["id"], row["symbol"], row["exchange"]) for row in directory_rows] == [
             (20, "6488", "OTC"),
         ]
-

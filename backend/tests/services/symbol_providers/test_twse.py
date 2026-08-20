@@ -115,4 +115,3 @@ def test_twse_provider_is_registered():
     assert isinstance(get_provider("twse"), TWSEProvider)
     providers = get_available_providers()
     assert providers["twse"]["markets"] == [{"key": "tse", "label": "Taiwan Stock Exchange (TSE)"}]
-

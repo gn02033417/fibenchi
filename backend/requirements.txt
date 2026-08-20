@@ -4,7 +4,6 @@ uvicorn[standard]==0.34.3
 sqlalchemy[asyncio]==2.0.41
 asyncpg==0.31.0
 alembic==1.15.2
-yahooquery>=2.3.7,<3.0
 pandas==2.2.3
 # Pinned for the same reason pandas is, plus one of its own: the indicator
 # contract fixtures are exact float comparisons, so a transitive numpy bump

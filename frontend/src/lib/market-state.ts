@@ -14,10 +14,10 @@ export interface MarketStateDisplay {
   label: string
   /**
    * Scheduled-phase equivalent — same vocabulary as the backend venue
-   * calendar's phase(). "closed" means prices are settled. PREPRE is Yahoo's
+   * calendar's phase(). "closed" means prices are settled. PREPRE is the
    * overnight state (POST→POSTPOST→PREPRE→PRE): for European venues it lasts
    * the whole night, so it must not masquerade as pre-market. POSTPOST is
-   * "after-hours has *ended*" ("POSTMARKET" is not a thing Yahoo emits).
+   * "after-hours has *ended*" ("POSTMARKET" is not an emitted state).
    */
   phase: "premarket" | "open" | "aftermarket" | "closed"
 }
@@ -32,7 +32,7 @@ const MARKET_STATES = {
 } as const satisfies Record<string, MarketStateDisplay>
 
 /**
- * The market-state vocabulary the backend emits (Yahoo's, hand-mirrored from
+ * The market-state vocabulary the backend emits (hand-mirrored from
  * `backend/app/schemas/quote.py` — no codegen). Comparing a MarketState
  * against a string outside this union is a compile error, which is the point:
  * a `=== "POSTMARKET"` typo can no longer type-check.
@@ -43,7 +43,7 @@ const DEFAULT_STATE: MarketStateDisplay = { dotColor: "bg-red-500", label: "Clos
 
 /** Resolve a market-state code to its dot colour + label (falls back to Closed). */
 export function marketState(state: MarketState | null | undefined): MarketStateDisplay {
-  // Runtime guard stays: the API cast is unchecked, so a novel Yahoo state
+  // Runtime guard stays: the API cast is unchecked, so a novel upstream state
   // must still degrade to Closed instead of exploding.
   return (state && MARKET_STATES[state]) || DEFAULT_STATE
 }

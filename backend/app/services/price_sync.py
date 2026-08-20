@@ -1,15 +1,24 @@
 """Sync price data from the configured price provider to the database."""
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants import PERIOD_DAYS, WARMUP_DAYS
 from app.domain import AssetRef
 from app.domain.market_state import is_session_forming
+from app.models.symbol_directory import TAIWAN_EXCHANGES
 from app.repositories.asset_repo import AssetRepository
 from app.repositories.price_repo import PriceRepository
+from app.services.compute.group import invalidate_indicator_cache
+from app.services.daily_ohlcv import (
+    aggregate_daily_ohlcv,
+    completed_session_dates,
+    missing_session_ranges,
+)
+from app.services.historical_queue import HistoricalDataQueue
 from app.services.price_providers import PriceProvider, get_price_provider
 
 logger = logging.getLogger(__name__)
@@ -19,6 +28,8 @@ logger = logging.getLogger(__name__)
 # price (same session) or the previous close (prior session). Keep it in sync
 # with ``SESSION_MATCH_TOL`` in ``frontend/src/lib/indicator-registry.ts``.
 SESSION_MATCH_TOL = 0.005  # 0.5%
+
+_historical_queue: HistoricalDataQueue | None = None
 
 # "Is the current session's daily bar still forming?" now comes from the
 # shared market-state trait table (is_session_forming): in REGULAR the trailing
@@ -240,8 +251,93 @@ async def _persist_symbol(
         return None
 
 
+def _get_historical_queue() -> HistoricalDataQueue:
+    """Return the process-wide queue so all historical work shares its limiter."""
+    global _historical_queue
+    if _historical_queue is None:
+        _historical_queue = HistoricalDataQueue()
+    return _historical_queue
+
+
+def _is_taiwan_ref(ref: AssetRef) -> bool:
+    exchange = ref.exchange.upper().strip() if ref.exchange else ""
+    return exchange in TAIWAN_EXCHANGES
+
+
+def _taiwan_venue(ref: AssetRef):
+    venue = ref.venue
+    if venue is None:
+        raise ValueError(f"Taiwan asset {ref} has no resolvable venue")
+    return venue
+
+
+async def _sync_taiwan_range(
+    db: AsyncSession,
+    ref: AssetRef,
+    start: date,
+    end: date,
+    *,
+    historical_queue: HistoricalDataQueue,
+    as_of: datetime | None,
+) -> int:
+    """Fill only missing completed XTAI sessions for one persisted asset."""
+    if ref.id is None:
+        raise ValueError("Taiwan settled-price sync requires a persisted AssetRef")
+
+    venue = _taiwan_venue(ref)
+    sessions = completed_session_dates(venue, start, end, as_of=as_of)
+    if not sessions:
+        return 0
+
+    price_repo = PriceRepository(db)
+    stored_dates = await price_repo.get_dates_for_asset_between(ref.id, min(sessions), max(sessions))
+    missing_dates = sessions - stored_dates
+    if not missing_dates:
+        return 0
+
+    count = 0
+    for gap_start, gap_end in missing_session_ranges(sessions, stored_dates):
+        minute_bars = await historical_queue.fetch(ref, gap_start, gap_end)
+        daily = aggregate_daily_ohlcv(minute_bars, venue)
+        if daily.empty:
+            continue
+        daily = daily.loc[daily.index.isin(missing_dates)]
+        if not daily.empty:
+            count += await price_repo.upsert_prices(ref, daily)
+    return count
+
+
+async def _sync_taiwan_period(
+    db: AsyncSession,
+    ref: AssetRef,
+    period: str,
+    *,
+    historical_queue: HistoricalDataQueue,
+    as_of: datetime | None,
+) -> int:
+    """Fill a requested period, always seeding first history with 1y + warmup."""
+    venue = _taiwan_venue(ref)
+    local_today = venue.local_date(as_of) or date.today()
+    requested_days = PERIOD_DAYS.get(period, PERIOD_DAYS["1y"])
+    lookback_days = max(requested_days, PERIOD_DAYS["1y"]) + WARMUP_DAYS
+    return await _sync_taiwan_range(
+        db,
+        ref,
+        local_today - timedelta(days=lookback_days),
+        local_today,
+        historical_queue=historical_queue,
+        as_of=as_of,
+    )
+
+
 async def sync_asset_prices(
-    db: AsyncSession, ref: AssetRef, period: str = "3mo", anchor: Anchor | None = None,
+    db: AsyncSession,
+    ref: AssetRef,
+    period: str = "3mo",
+    anchor: Anchor | None = None,
+    *,
+    historical_queue: HistoricalDataQueue | None = None,
+    as_of: datetime | None = None,
 ) -> int:
     """Fetch and upsert price data for a single asset. Returns number of rows upserted.
 
@@ -249,6 +345,18 @@ async def sync_asset_prices(
     anchor (e.g. the price-heal loop, which batch-fetched every quote) pass it
     in, avoiding a redundant per-symbol quote round-trip.
     """
+    if _is_taiwan_ref(ref):
+        count = await _sync_taiwan_period(
+            db,
+            ref,
+            period,
+            historical_queue=historical_queue or _get_historical_queue(),
+            as_of=as_of,
+        )
+        if count:
+            invalidate_indicator_cache()
+        return count
+
     provider = get_price_provider()
     df = await provider.fetch_history(ref, period=period)
     if anchor is None:
@@ -257,12 +365,19 @@ async def sync_asset_prices(
 
 
 async def sync_asset_prices_range(
-    db: AsyncSession, ref: AssetRef, start: date, end: date
+    db: AsyncSession,
+    ref: AssetRef,
+    start: date,
+    end: date,
+    *,
+    historical_queue: HistoricalDataQueue | None = None,
+    as_of: datetime | None = None,
 ) -> int:
     """Fetch and upsert price data for a date range. Returns number of rows upserted.
 
-    ``end`` is exclusive (Yahoo range semantics): a bar dated ``end`` itself
-    is not fetched — callers that need it must pass the day after.
+    Taiwan refs use inclusive dates and fill only missing, completed XTAI
+    sessions through :class:`HistoricalDataQueue`. Legacy non-Taiwan refs keep
+    the prior exclusive-end provider behavior until TW-18 retires that path.
 
     A range that reaches today can include the current session's still-forming
     bar, exactly like a period fetch — this path used to upsert it raw, so any
@@ -272,6 +387,19 @@ async def sync_asset_prices_range(
     closes that hole. Purely historical ranges (interior hole heals, bounded
     backfills) skip the quote round-trip: every bar in them is settled.
     """
+    if _is_taiwan_ref(ref):
+        count = await _sync_taiwan_range(
+            db,
+            ref,
+            start,
+            end,
+            historical_queue=historical_queue or _get_historical_queue(),
+            as_of=as_of,
+        )
+        if count:
+            invalidate_indicator_cache()
+        return count
+
     provider = get_price_provider()
     df = await provider.fetch_history(ref, start=start, end=end)
     if end < date.today():
@@ -280,7 +408,13 @@ async def sync_asset_prices_range(
     return await _drop_and_persist(db, ref, df, anchor)
 
 
-async def sync_all_prices(db: AsyncSession, period: str = "1y") -> dict[str, int]:
+async def sync_all_prices(
+    db: AsyncSession,
+    period: str = "1y",
+    *,
+    historical_queue: HistoricalDataQueue | None = None,
+    as_of: datetime | None = None,
+) -> dict[str, int]:
     """Fetch and upsert prices for all tracked assets. Returns {symbol: count}."""
     assets = await AssetRepository(db).list_all()
 
@@ -290,45 +424,66 @@ async def sync_all_prices(db: AsyncSession, period: str = "1y") -> dict[str, int
     # Detached refs, captured while the rows are live: the per-symbol loop
     # below commits and may roll back, either of which expires ORM instances.
     refs = {a.symbol: AssetRef.of(a) for a in assets}
-    symbols = list(refs)
-    provider = get_price_provider()
-    data = await provider.batch_fetch_history(symbols, period=period)
-    anchors = await _quote_anchors(provider, symbols)
+    taiwan_refs = {symbol: ref for symbol, ref in refs.items() if _is_taiwan_ref(ref)}
+    legacy_refs = {symbol: ref for symbol, ref in refs.items() if not _is_taiwan_ref(ref)}
+    counts: dict[str, int] = {}
 
-    counts = {}
-    for sym, df in data.items():
-        ref = refs.get(sym)
-        if ref:
-            count = await _persist_symbol(db, ref, df, anchors.get(sym, _NO_ANCHOR))
-            if count is not None:
-                counts[sym] = count
-
-    # The batch response silently omits symbols Yahoo hiccupped on; without a
-    # retry those stay stale until the next scheduled run (up to a full day).
-    missing = [s for s in symbols if s not in data]
-    if missing and not data:
-        logger.error(
-            "Batch history returned no data for all %d symbols; skipping per-symbol retries",
-            len(symbols),
-        )
-    elif missing:
-        logger.warning(
-            "Batch history missing %d/%d symbols; retrying individually: %s",
-            len(missing), len(symbols), ", ".join(sorted(missing)),
-        )
-        for sym in missing:
+    if taiwan_refs:
+        queue = historical_queue or _get_historical_queue()
+        for ref in taiwan_refs.values():
             try:
-                df = await provider.fetch_history(sym, period=period)
+                counts[ref.symbol] = await _sync_taiwan_period(
+                    db,
+                    ref,
+                    period,
+                    historical_queue=queue,
+                    as_of=as_of,
+                )
             except Exception:
-                logger.warning("Retry fetch for %s failed", sym, exc_info=True)
-                continue
-            if df is None or df.empty:
-                logger.warning("Retry fetch for %s returned no data", sym)
-                continue
-            count = await _persist_symbol(db, refs[sym], df, anchors.get(sym, _NO_ANCHOR))
-            if count is not None:
-                counts[sym] = count
+                logger.warning("Settled Taiwan sync for %s failed; skipping", ref, exc_info=True)
+                await db.rollback()
 
+    if legacy_refs:
+        symbols = list(legacy_refs)
+        provider = get_price_provider()
+        data = await provider.batch_fetch_history(symbols, period=period)
+        anchors = await _quote_anchors(provider, symbols)
+
+        for sym, df in data.items():
+            ref = legacy_refs.get(sym)
+            if ref:
+                count = await _persist_symbol(db, ref, df, anchors.get(sym, _NO_ANCHOR))
+                if count is not None:
+                    counts[sym] = count
+
+        # The legacy provider can silently omit symbols. Keep this temporary
+        # compatibility path isolated until TW-18 removes it with Yahoo.
+        missing = [symbol for symbol in symbols if symbol not in data]
+        if missing and not data:
+            logger.error(
+                "Batch history returned no data for all %d symbols; skipping per-symbol retries",
+                len(symbols),
+            )
+        elif missing:
+            logger.warning(
+                "Batch history missing %d/%d symbols; retrying individually: %s",
+                len(missing), len(symbols), ", ".join(sorted(missing)),
+            )
+            for sym in missing:
+                try:
+                    df = await provider.fetch_history(sym, period=period)
+                except Exception:
+                    logger.warning("Retry fetch for %s failed", sym, exc_info=True)
+                    continue
+                if df is None or df.empty:
+                    logger.warning("Retry fetch for %s returned no data", sym)
+                    continue
+                count = await _persist_symbol(db, legacy_refs[sym], df, anchors.get(sym, _NO_ANCHOR))
+                if count is not None:
+                    counts[sym] = count
+
+    if any(counts.values()):
+        invalidate_indicator_cache()
     return counts
 
 

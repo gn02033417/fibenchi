@@ -2,128 +2,154 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-A self-hosted investment research dashboard for tracking stocks, ETFs, and custom baskets. View OHLCV candlestick charts with technical indicators, group tickers into cross-cutting investment theses, annotate charts, keep Markdown notes, and build pseudo-ETFs with equal-weight allocation. A native mobile companion app mirrors your watchlist for glanceable market data on the phone.
+A self-hosted Taiwan investment-research dashboard for tracking stocks, ETFs, and custom baskets. Fibenchi stores daily OHLCV history, computes technical indicators, streams Shioaji quotes through a server-side SSE boundary, and keeps notes, annotations, tags, theses, and pseudo-ETFs in PostgreSQL.
+
+## Taiwan runtime
+
+The supported market path is Taiwan TSE/OTC only:
+
+`TWSE/TPEx reference data + Shioaji STK contracts -> local SymbolDirectory -> FastAPI -> React`
+
+The browser never connects to Shioaji and never receives `SJ_API_KEY` or `SJ_SEC_KEY`. The backend talks to the internal Shioaji sidecar; CI uses HTTP stubs and does not require a brokerage account or live TWSE/TPEx services.
 
 ## Features
 
-- **Groups** — Organize assets into named groups with table, card, live-quote, and indicator-scanner views, sortable by any indicator, with configurable column visibility
-- **Theses** — Cross-cutting thematic baskets (e.g. "El Niño", "Cables") that span groups — each with a colour, icon, lifecycle status (watching / live / played out), open date, and equal-weight aggregate return since opening. In the group table, thesis members render as colour-edged rows (hover to reveal the thesis icon) or fold into per-thesis sections
-- **Price charts** — Candlestick or line charts with overlay indicators (SMA 20/50, Bollinger Bands) and sub-charts (RSI, MACD) via [lightweight-charts](https://github.com/tradingview/lightweight-charts)
-- **Technical indicators** — RSI, SMA, EMA, Bollinger Bands, MACD, ATR, ADX with color-coded thresholds and expandable per-asset charts in table rows
-- **Real-time quotes** — Server-sent events push live prices with adaptive polling (15s market hours, 60s pre/post, 300s closed) and automatic reconnection with exponential backoff
-- **Pseudo-ETFs** — Custom baskets with equal-weight allocation, quarterly rebalancing, indexed performance tracking, and synced crosshairs across constituent charts
-- **Portfolio overview** — Composite equal-weight index of all tracked assets with dynamic entry (filters penny stocks), top/bottom performer rankings
-- **ETF holdings** — Drill into ETF constituents with per-holding indicator snapshots and expandable charts
-- **Notes** — Markdown-formatted notes per asset or pseudo-ETF
-- **Chart annotations** — Dated, colored markers on price charts
-- **Tags** — Colored labels for categorizing assets within groups
-- **Global search** — Cmd+K search across tracked assets and Yahoo Finance symbol lookup
-- **Collapsible sidebar** — Navigation with group quick-access and inline group creation
-- **Mobile companion app** — A separate native React Native / Expo app reads `GET /api/companion/config` to learn what to track (groups, tickers, tags) and fetches live market data on-device — Fibenchi acts purely as the config plane
-- **Settings** — Configurable chart type, default period, indicator visibility, compact mode, decimal places, theme (dark/light/system)
-- **Dark mode** — Toggle between light, dark, and system themes
+- **Groups** — Organize assets into named groups with table, card, live-quote, and indicator-scanner views
+- **Taiwan symbol directory** — Search by raw code or Chinese name; active TSE/OTC stock and ETF rows are backed by official reference data and Shioaji contract availability
+- **Price charts** — Candlestick or line charts with SMA, Bollinger Bands, RSI, MACD, ATR, and ADX via [lightweight-charts](https://github.com/tradingview/lightweight-charts)
+- **Real-time quotes** — Server-sent events expose explicit `LIVE`, `CACHED`, and `DISCONNECTED` freshness states; the bounded Shioaji pool defaults to 180 subscriptions
+- **Historical prices** — Shioaji Kbars are fetched in bounded ranges and aggregated into settled Taiwan daily OHLCV rows in PostgreSQL
+- **Pseudo-ETFs** — Custom baskets with equal-weight allocation, quarterly rebalancing, indexed performance tracking, and synced crosshairs
+- **Portfolio overview** — Composite equal-weight index of tracked assets with top/bottom performer rankings
+- **Theses, notes, annotations, and tags** — Research context attached to assets and groups
+- **Mobile companion app** — A separate React Native / Expo app can read the companion API as a configuration plane
+- **Dark mode** — Light, dark, and system themes
 
-## Tech Stack
+## Tech stack
 
 | Layer    | Technology |
 |----------|------------|
-| Backend  | Python 3.12, FastAPI, SQLAlchemy (async), PostgreSQL, APScheduler |
+| Backend  | Python 3.12, FastAPI, SQLAlchemy async, PostgreSQL, APScheduler |
 | Frontend | React 19, TypeScript, TanStack React Query, Tailwind CSS, shadcn/ui |
-| Mobile   | React Native + Expo (separate `fibenchi-app` repo) |
+| Market data | TWSE/TPEx reference providers and Shioaji Server 1.7.0 sidecar |
 | Charts   | lightweight-charts v5 |
-| Data     | Yahoo Finance via yahooquery |
 | Infra    | Docker Compose, GitHub Actions CI/CD, GHCR |
 
-## Quick Start
+## Quick start
 
 ```bash
-# Clone the repository
 git clone https://github.com/jvanmelckebeke/fibenchi.git
 cd fibenchi
-
-# Copy environment config (defaults work out of the box)
 cp .env.example .env
-
-# Start all services
-docker compose up -d
+# Set SJ_API_KEY and SJ_SEC_KEY in .env for live Shioaji data.
+docker compose up -d --build
 ```
 
-The app will be available at:
-- **Frontend:** http://localhost:5173
-- **Backend API:** http://localhost:18000/api
-- **API docs:** http://localhost:18000/docs
+The development stack is available at:
+
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:18000/api
+- API docs: http://localhost:18000/docs
+- Backend health: http://localhost:18000/api/health
+
+For a credential-free local smoke run, leave the Shioaji credentials empty and use the offline test suite. Live quotes and real contract/Kbars requests require valid sidecar credentials.
 
 ## Production
 
-A multi-stage Dockerfile builds the React SPA and bundles it into the Python image, which serves both the API and frontend:
+The production image builds the React SPA and serves it from the Python application image:
 
 ```bash
-docker compose -f docker-compose.prod.yaml up -d
+docker compose -f docker-compose.prod.yaml up -d --build
 ```
 
-This exposes the app on port `18000`. Pre-built images are published to GHCR on every merge to `main`.
+Production credential flow is intentionally one-way:
 
-> **Security note:** The API has no built-in authentication. Deploy behind a reverse proxy (Traefik, nginx, Caddy) or VPN when exposing to a network. Change the default database credentials in production by setting `DATABASE_URL` in your `.env`.
+- `SJ_API_KEY` and `SJ_SEC_KEY` are environment variables of the `shioaji` service only.
+- The `app` service receives only `SHIOAJI_BASE_URL`, timeout, subscription-limit, database, and scheduler settings.
+- No Shioaji credential is a Vite variable, frontend source value, Docker build argument, or public API response.
+
+Check the public backend with `GET /api/health`. From inside the Compose network, the sidecar exposes the typed health checks used by the backend at `/api/v1/health`, `/api/v1/info`, and `/api/v1/stream/status`.
+
+The API has no built-in authentication. Put the service behind a reverse proxy, VPN, or equivalent access control before exposing it to a network. Set a strong `POSTGRES_PASSWORD` in production.
 
 ## Configuration
 
-Environment variables (see `.env.example`):
+All variables are listed in `.env.example`.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://fibenchi:fibenchi@db:5432/fibenchi` | PostgreSQL connection string |
-| `REFRESH_CRON` | `0 23 * * *` | Cron schedule for daily price sync |
+| Variable | Default | Used by | Description |
+|----------|---------|---------|-------------|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `fibenchi` / required in prod / `fibenchi` | `db`, `app` | PostgreSQL connection settings |
+| `DATABASE_URL` | Compose-generated URL | `backend` | Async PostgreSQL connection string |
+| `REFRESH_CRON` | `0 23 * * *` | `app` | Daily settled-price refresh schedule |
+| `SJ_API_KEY` | empty | `shioaji` only | Shioaji account key; never pass to `app` or frontend |
+| `SJ_SEC_KEY` | empty | `shioaji` only | Shioaji secret key; never pass to `app` or frontend |
+| `SJ_PRODUCTION` | `false` | `shioaji` | Shioaji simulation/live mode |
+| `SJ_HTTP_ADDR` | `0.0.0.0:8080` | `shioaji` | Internal sidecar bind address |
+| `SHIOAJI_BASE_URL` | `http://shioaji:8080` | `app` | Internal sidecar URL |
+| `SHIOAJI_TIMEOUT_SECONDS` | `5` | `app` | Sidecar HTTP/SSE timeout |
+| `SHIOAJI_MAX_SUBSCRIPTIONS` | `180` | `app` | Operational Quote cap; configuration hard limit is 200 |
 
-## Development
+## Data limitations and explicit non-goals
 
-The dev stack uses Docker Compose with hot reload for both backend (uvicorn `--reload`) and frontend (Vite HMR):
+- This release covers Taiwan TSE/OTC stocks and ETFs only. Raw symbols are stored without `.TW` or `.TWO` suffixes.
+- Historical daily rows are derived from Shioaji minute Kbars and only completed venue sessions are persisted. A current forming session may be absent until it settles.
+- A sidecar disconnect keeps the last known timestamp but marks the quote `DISCONNECTED`; it must not be presented as `LIVE`. Symbols outside the bounded subscription set are `CACHED` when their live slot is evicted.
+- No order placement, trading, broker position sync, account management, or portfolio execution is included.
+- Fundamentals, Earnings, ETF Holdings, Yahoo-specific links, overseas assets, and Yahoo remote search are intentionally disabled or hidden in the Taiwan build.
+- CI and the release gate do not call real Shioaji, TWSE, or TPEx services. Live credential/sidecar verification remains an operator check in a container-capable environment.
+
+## Development and release workflow
+
+Each approved ticket is implemented on its named `tw-NN-*` branch. Keep the architecture spec, implementation plan, and ticket scope as the source of truth; reassess only when the actual codebase has an irreconcilable conflict with them.
+
+Before opening a `dev` pull request, run the focused Taiwan gate and the full backend/frontend checks. After the `TW-19` release gate is green and `dev` has been validated, open the `dev -> main` pull request. Do not treat a successful build alone as proof of live sidecar health.
+
+## Tests and release checks
 
 ```bash
-docker compose up -d              # Start all services
-docker compose logs -f frontend   # Watch frontend logs
-docker compose restart backend    # Restart after backend changes
-```
+# Backend focused release gate
+docker compose exec backend pytest tests/integration/test_taiwan_e2e.py tests/integration/test_taiwan_migration_e2e.py -v
 
-### Running Tests
-
-```bash
-# Backend tests (uses SQLite in-memory, no DB needed)
+# Backend full checks
 docker compose exec backend pytest
+docker compose exec backend ruff check .
 
-# Single test
-docker compose exec backend pytest tests/test_assets.py -k test_name
-
-# Frontend lint + type check
+# Frontend checks
 docker compose exec frontend pnpm run lint
 docker compose exec frontend pnpm run build
+docker compose exec frontend pnpm run test
+
+# Production image and Compose syntax
+docker build -t fibenchi:taiwan-release .
+docker compose -f docker-compose.prod.yaml config
 ```
 
-## Project Structure
+The E2E tests use `httpx.MockTransport` for contracts, Kbars, Quote subscriptions, and SSE. They verify the complete local chain without real market services or credentials.
+
+## Project structure
 
 ```
 fibenchi/
 ├── backend/
-│   └── app/
-│       ├── models/            # SQLAlchemy models
-│       ├── schemas/           # Pydantic request/response models
-│       ├── routers/           # FastAPI route handlers
-│       ├── services/
-│       │   ├── compute/       # Indicator math, group batching, portfolio/pseudo-ETF perf
-│       │   ├── yahoo.py       # Yahoo Finance integration
-│       │   ├── price_sync.py  # Price upsert logic
-│       │   └── price_service.py  # Price fetch orchestration
-│       └── main.py            # App entrypoint, scheduler, SPA serving
+│   ├── app/
+│   │   ├── models/            # SQLAlchemy models and relationships
+│   │   ├── schemas/           # Pydantic request/response contracts
+│   │   ├── routers/           # FastAPI route handlers
+│   │   ├── services/
+│   │   │   ├── shioaji/       # Typed sidecar client, contracts, Kbars, Quote SSE
+│   │   │   ├── symbol_providers/ # TWSE/TPEx reference adapters
+│   │   │   ├── compute/       # Indicator and group calculations
+│   │   │   ├── historical_queue.py
+│   │   │   ├── subscription_manager.py
+│   │   │   ├── price_sync.py
+│   │   │   └── price_service.py
+│   │   └── main.py            # App entrypoint, scheduler, realtime lifecycle
+│   └── tests/
+│       └── integration/       # API and Taiwan release gates
 ├── frontend/
-│   └── src/
-│       ├── components/
-│       │   ├── chart/         # Chart builders, sync providers, sub-charts, legends
-│       │   ├── ui/            # shadcn/radix primitives
-│       │   └── ...            # Shared components (layout, search, tables, grids)
-│       ├── pages/             # Route pages
-│       ├── lib/               # API client, React Query hooks, SSE stream, settings, format utils
-│       └── hooks/             # Shared React hooks (chart lifecycle, debounce, etc.)
-├── docker-compose.yaml        # Dev environment
-├── docker-compose.prod.yaml
-├── Dockerfile                 # Multi-stage production build
-└── .github/workflows/         # CI: test + build + push to GHCR
+│   └── src/                   # React pages, components, API, SSE, indicators
+├── docker-compose.yaml        # Development environment
+├── docker-compose.prod.yaml   # Production environment
+├── Dockerfile                 # Multi-stage production image
+└── .github/workflows/         # Offline tests and image build/publish
 ```

@@ -17,7 +17,7 @@ import { RemoveAssetDialog } from "@/components/assets/remove-asset-dialog"
 import { AssetCard } from "@/components/assets/asset-card"
 import { TagFilterPopover } from "@/components/tags/tag-filter-popover"
 import { useGroup, useGroups, useGroupSparklines, useGroupIndicators, useUpdateGroup, useTags, useTheses, usePrefetchAssetDetail, usePrefetchOtherGroups } from "@/lib/queries"
-import { useQuotes } from "@/lib/quote-stream"
+import { useActiveGroupDemand, useQuotes } from "@/lib/quote-stream"
 import { buildSortOptions, getScannableDescriptors } from "@/lib/indicator-registry"
 import { useSettings, type AssetTypeFilter, type GroupSortBy, type GroupViewMode, type SortDir } from "@/lib/settings"
 import { useFilteredSortedAssets, getSortValue, compareSortValues, type SortValue } from "@/lib/use-group-filter"
@@ -70,6 +70,7 @@ export function GroupPage({ groupId }: { groupId: number }) {
   const sortDir = settings.group_sort_dir
 
   const quotes = useQuotes()
+  useActiveGroupDemand(groupId)
 
   const allAssets = group?.assets
   const isDefaultGroup = group?.is_default ?? false

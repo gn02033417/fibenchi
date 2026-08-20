@@ -169,7 +169,7 @@ export function OrphansCard() {
             <AlertDialogTitle>Delete {pendingDelete?.symbol}?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently removes the asset row and its {pendingDelete?.price_bars} stored
-              price bars. If you re-add the ticker later, the history is re-fetched from Yahoo.
+              price bars. If you re-add the ticker later, the history is re-fetched from the configured provider.
             </AlertDialogDescription>
             {pendingDelete && handwrittenLoss(pendingDelete) && (
               <AlertDialogDescription className="text-destructive font-medium">

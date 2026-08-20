@@ -3,10 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import PeriodType
 from app.database import get_db
-from app.schemas.earnings import EarningsResponse
 from app.schemas.price import AssetDetailResponse, IndicatorResponse, PriceResponse, RefreshResponse
 from app.services import price_service
-from app.services.earnings_cache import get_earnings
 from app.services.entity_lookups import find_asset, get_asset
 
 router = APIRouter(prefix="/api/assets/{symbol}", tags=["prices"])
@@ -17,9 +15,8 @@ async def get_prices(symbol: str, period: PeriodType = Query("3mo"), db: AsyncSe
     """Return daily OHLCV price history for a symbol.
 
     For tracked assets, prices are read from the database (and auto-synced
-    from Yahoo Finance if the requested period isn't yet covered). For
-    untracked symbols, prices are fetched ephemerally from Yahoo without
-    persisting.
+    from the configured Taiwan provider if the requested period isn't yet
+    covered). For untracked symbols, the provider fetch is ephemeral.
 
     Supported periods: `1mo`, `3mo` (default), `6mo`, `1y`, `2y`, `5y`.
     """
@@ -55,16 +52,9 @@ async def get_detail(symbol: str, period: PeriodType = Query("3mo"), db: AsyncSe
     return await price_service.get_detail(db, asset, symbol, period)
 
 
-@router.get("/earnings", response_model=EarningsResponse, summary="Get next earnings date")
-async def get_earnings_date(symbol: str):
-    """Return the next earnings date for a symbol (stocks only)."""
-    result = await get_earnings(symbol)
-    return EarningsResponse(**result) if result else EarningsResponse()
-
-
-@router.post("/refresh", response_model=RefreshResponse, status_code=200, summary="Force-refresh prices from Yahoo Finance")
+@router.post("/refresh", response_model=RefreshResponse, status_code=200, summary="Force-refresh Taiwan prices")
 async def refresh_prices(symbol: str, period: PeriodType = Query("3mo"), db: AsyncSession = Depends(get_db)):
-    """Force a re-sync of price data from Yahoo Finance for a tracked asset.
+    """Force a re-sync of price data from the configured Taiwan provider.
 
     Returns the number of price points upserted.
     """

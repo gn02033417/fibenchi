@@ -8,12 +8,15 @@ import pandas as pd
 import pytest
 
 from app.domain import AssetRef
+from app.domain.phases import Session
 from app.services.intraday import (
     _classify_session,
-    fetch_and_store_intraday,
+    persist_live_intraday_bars,
 )
+from app.services.intraday_aggregator import IntradayBucket
 from app.services.yahoo import yahoo_client
 from app.services.yahoo._intraday import ProviderIntradayBar
+from app.services.yahoo.legacy_intraday import fetch_and_store_intraday
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
@@ -301,3 +304,46 @@ class TestFetchAndStoreIntraday:
             count = await fetch_and_store_intraday(mock_db, [AssetRef("UNKNOWN")])
 
         assert count == 0
+
+
+class TestPersistLiveIntradayBars:
+    async def test_persists_completed_buckets_using_existing_intraday_key(self):
+        mock_db = AsyncMock()
+        bar = IntradayBucket(
+            symbol="2330",
+            timestamp=datetime(2026, 8, 20, 9, 0, tzinfo=ZoneInfo("Asia/Taipei")),
+            open=100,
+            high=103,
+            low=99,
+            close=102,
+            volume=12,
+            session=Session.REGULAR,
+            status="completed",
+        )
+
+        count = await persist_live_intraday_bars(mock_db, [AssetRef("2330", 1)], [bar])
+
+        assert count == 1
+        mock_db.execute.assert_awaited_once()
+        mock_db.commit.assert_awaited_once()
+        assert "ON CONFLICT" in str(mock_db.execute.await_args.args[0]).upper()
+
+    async def test_does_not_persist_forming_bucket(self):
+        mock_db = AsyncMock()
+        bar = IntradayBucket(
+            symbol="2330",
+            timestamp=datetime(2026, 8, 20, 9, 0, tzinfo=ZoneInfo("Asia/Taipei")),
+            open=100,
+            high=100,
+            low=100,
+            close=100,
+            volume=1,
+            session=Session.REGULAR,
+            status="forming",
+        )
+
+        count = await persist_live_intraday_bars(mock_db, [AssetRef("2330", 1)], [bar])
+
+        assert count == 0
+        mock_db.execute.assert_not_awaited()
+        mock_db.commit.assert_not_awaited()

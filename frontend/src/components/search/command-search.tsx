@@ -13,7 +13,7 @@ export function CommandSearch() {
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { localResults, yahooLoading, allResults } = useTwoPhaseSearch(trimmedQuery)
+  const { allResults } = useTwoPhaseSearch(trimmedQuery)
 
   // Clamp selectedIndex when results shrink
   const clampedIndex = allResults.length > 0 ? Math.min(selectedIndex, allResults.length - 1) : 0
@@ -99,11 +99,9 @@ export function CommandSearch() {
             />
           </div>
 
-          {(allResults.length > 0 || yahooLoading) && trimmedQuery && (
+          {allResults.length > 0 && trimmedQuery && (
             <div className="max-h-72 overflow-auto py-1">
               <SearchResultsList
-                localResults={localResults}
-                yahooLoading={yahooLoading}
                 allResults={allResults}
                 selectedIndex={clampedIndex}
                 onSelect={(r) => goToSymbol(r.symbol)}
@@ -113,7 +111,7 @@ export function CommandSearch() {
             </div>
           )}
 
-          {trimmedQuery && !yahooLoading && allResults.length === 0 && (
+          {trimmedQuery && allResults.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
               No results found for &ldquo;{trimmedQuery}&rdquo;
             </div>
