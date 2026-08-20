@@ -71,3 +71,20 @@ Discoveries:
 - The Shioaji sidecar Quote-only contract uses `POST /api/v1/stream/subscribe` / `unsubscribe` and one `GET /api/v1/stream/data/quote_stk` SSE connection.
 - `SubscriptionManager` removes obsolete subscriptions before adding replacements, so it cannot exceed its validated 180-slot operational limit; a reconnect recomputes wanted subscriptions through its provider.
 - `LiveQuoteStore` retains last-known values and explicitly emits `CACHED` for evicted symbols or `DISCONNECTED` after stream loss. Browser SSE wiring remains TW-15 scope.
+
+## TW-15
+
+Status: COMPLETE
+Commit: 3d17a86
+
+Verification:
+
+- Focused lifecycle, quote-service, quote-router, store, manager, Shioaji client/stream and interval regression suite — 43 passed.
+- `backend\.venv\Scripts\ruff.exe check` on TW-15 source and tests — passed.
+- `git diff --check` — passed before commit.
+
+Discoveries:
+
+- The app lifespan owns one `LiveQuoteStore` and one `SubscriptionManager` task; startup subscriptions accept only AssetRefs with verified TSE/OTC exchange metadata.
+- `/api/quotes/stream` keeps its path and `quotes` event format: it sends a current grouped-asset frame first, then only changed store values. Opening a browser SSE client does not call the price provider.
+- Unknown tracked symbols are represented by explicit `DISCONNECTED` placeholders rather than fabricated prices; listener cleanup is covered on stream cancellation.
