@@ -153,3 +153,28 @@ Discoveries:
 - The Taiwan runtime no longer imports `app.services.yahoo`; the new AST and subprocess gate also proves the active app can import while blocking both `app.services.yahoo` and `yahooquery`.
 - Yahoo-only earnings, ETF holdings, fundamentals, external-link settings, and remote symbol search UI are removed or hidden. Local Taiwan directory search remains the only frontend symbol-search path.
 - The legacy Yahoo package and provider facade remain isolated for future reuse, while `yahooquery` is no longer a required runtime dependency. Legacy intraday persistence is isolated under `app.services.yahoo.legacy_intraday` and is no longer scheduled.
+
+## TW-19
+
+Status: COMPLETE
+Implementation commit: 8d7bb4e
+
+Verification:
+
+- `backend\\.venv\\Scripts\\python.exe -m pytest tests/integration/test_taiwan_e2e.py tests/integration/test_taiwan_migration_e2e.py -v` — 4 passed.
+- `backend\\.venv\\Scripts\\python.exe -m pytest -q` — 925 passed, 752 warnings.
+- `backend\\.venv\\Scripts\\ruff.exe check app tests` — passed.
+- `corepack pnpm run test` — 56 passed.
+- `corepack pnpm run lint` — passed.
+- `corepack pnpm run build` — passed; Vite reported the existing chunk-size warning.
+- Frontend `dist` credential scan — passed; no `SJ_API_KEY` or `SJ_SEC_KEY` markers.
+- Production Compose YAML and CI YAML — parsed successfully with the local YAML parser.
+- Credential boundary check — passed; production Shioaji credentials are present only on the `shioaji` service and absent from frontend source.
+- `docker compose -f docker-compose.prod.yaml config`, `docker compose exec ...`, and `docker build -t fibenchi:taiwan-release .` — not runnable because `docker` is not installed on this machine. Direct venv/Node gates passed; live container/sidecar health remains an operator gate.
+
+Discoveries:
+
+- The new E2E uses one `httpx.MockTransport` stub for Shioaji contracts, Kbars, Quote subscriptions, and SSE, then drives the real directory sync, API search/asset/group flow, live quote store, history backfill, and indicator endpoints without external market services.
+- The release gate proves every Kbars request is at most 30 calendar days, disconnect preserves the last timestamp while changing freshness to `DISCONNECTED`, reconnect rebuilds the subscription, and an evicted live symbol becomes `CACHED` under the 180-slot cap.
+- The migration E2E starts from `.TW`/`.TWO` rows with group, tag, thesis, note, and price relationships; IDs and relationships survive, while collisions abort before either table is changed.
+- README, `.env.example`, Compose files, CI, and `docs/TAIWAN_OPERATIONS.md` now document sidecar-only credentials, health endpoints, data limitations, offline CI, and the approved ticket/branch release workflow.
