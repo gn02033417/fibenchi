@@ -21,6 +21,11 @@ from app.utils import TTLCache
 _indicator_cache: TTLCache = TTLCache(default_ttl=600)
 
 
+def invalidate_indicator_cache() -> None:
+    """Discard snapshots after settled daily history changes in place."""
+    _indicator_cache.clear()
+
+
 async def _get_default_group_refs(db: AsyncSession) -> list[AssetRef]:
     """Get an AssetRef per asset in the default group."""
     group = await GroupRepository(db).get_default()

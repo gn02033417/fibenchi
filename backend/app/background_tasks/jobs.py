@@ -92,19 +92,14 @@ def _refresh_trigger() -> CronTrigger | None:
     )
 
 
-# Supplemental daytime refreshes. The primary run fires once at REFRESH_CRON
-# (23:00 UTC by default), but Yahoo publishes some markets' daily bars well
-# after their close — notably KRX (``.KS``), whose bar for a session isn't in
-# Yahoo's daily history until the *following* day. A single nightly run
-# therefore leaves Asian markets a full day stale (a stale σ-Move/change
-# sitting beside a live quote). Extra 08:00 and 16:00 UTC runs catch the
-# prior Asian session (published overnight) and any late Yahoo publish, so no
-# market stays stale longer than ~8h.
+# Supplemental runs are safe because settled-price sync only fetches missing
+# completed XTAI sessions. A daytime run never writes the active session and a
+# post-close run picks up only the dates the database still lacks.
 @background_task("price_refresh", trigger=_refresh_trigger)
 @background_task("price_refresh_supplemental", trigger=CronTrigger(minute="0", hour="8,16"))
 async def scheduled_refresh():
-    """Refresh all asset prices, then warm the indicator cache."""
-    logger.info("Running scheduled price refresh...")
+    """Sync missing settled price sessions, then re-warm indicator caches."""
+    logger.info("Running scheduled settled-price sync...")
     async with async_session() as db:
         try:
             counts = await sync_all_prices(db)

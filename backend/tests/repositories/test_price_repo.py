@@ -54,6 +54,19 @@ async def test_list_by_asset_since(db):
     assert all(p.date >= since for p in result)
 
 
+async def test_get_dates_for_asset_between_is_inclusive_and_scoped(db):
+    a1 = await _create_asset(db, "AAPL")
+    a2 = await _create_asset(db, "MSFT")
+    prices = await _seed_prices(db, a1.id, n_days=10)
+    await _seed_prices(db, a2.id, n_days=10)
+    start = prices[1].date
+    end = prices[-2].date
+
+    dates = await PriceRepository(db).get_dates_for_asset_between(a1.id, start, end)
+
+    assert dates == {price.date for price in prices if start <= price.date <= end}
+
+
 async def test_delete_prices_after(db):
     """delete_prices_after removes only rows strictly after the cutoff date."""
     asset = await _create_asset(db)

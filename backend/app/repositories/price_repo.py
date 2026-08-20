@@ -31,6 +31,21 @@ class PriceRepository:
         )
         return list(result.scalars().all())
 
+    async def get_dates_for_asset_between(
+        self, asset_id: int, start: date, end: date
+    ) -> set[date]:
+        """Return persisted price dates in the inclusive range for one asset."""
+        if end < start:
+            return set()
+        result = await self.db.execute(
+            select(PriceHistory.date).where(
+                PriceHistory.asset_id == asset_id,
+                PriceHistory.date >= start,
+                PriceHistory.date <= end,
+            )
+        )
+        return set(result.scalars())
+
     async def list_by_assets_since(
         self, asset_ids: list[int], start: date
     ) -> list[PriceHistory]:
