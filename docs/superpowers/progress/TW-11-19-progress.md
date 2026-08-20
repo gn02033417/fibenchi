@@ -88,3 +88,23 @@ Discoveries:
 - The app lifespan owns one `LiveQuoteStore` and one `SubscriptionManager` task; startup subscriptions accept only AssetRefs with verified TSE/OTC exchange metadata.
 - `/api/quotes/stream` keeps its path and `quotes` event format: it sends a current grouped-asset frame first, then only changed store values. Opening a browser SSE client does not call the price provider.
 - Unknown tracked symbols are represented by explicit `DISCONNECTED` placeholders rather than fabricated prices; listener cleanup is covered on stream cancellation.
+
+## TW-16
+
+Status: COMPLETE
+Commit: 9a5c32b
+
+Verification:
+
+- `backend\.venv\Scripts\python.exe -m pytest -q` — 913 passed; the new active-demand integration/focused suite — 20 passed.
+- `backend\.venv\Scripts\python.exe -m ruff check app tests` — passed.
+- `corepack pnpm run test` — 56 passed.
+- `corepack pnpm run lint` — passed.
+- `corepack pnpm run build` — passed; Vite reported only the existing chunk-size warning.
+- `git diff --cached --check` — passed before commit.
+
+Discoveries:
+
+- The approved TW-13 demand seam was present as the pure priority allocator but had no browser registration path. TW-16 completes it through optional `active_asset` / `active_group` query parameters on the existing `/api/quotes/stream`; registration and removal follow the SSE connection lifetime, with immediate bounded diff reconciliation.
+- `LIVE`, `CACHED`, and `DISCONNECTED` are rendered by the shared `QuoteFreshness` component at asset detail, group card/table, live-day, and Portfolio board tooltip price surfaces. `CACHED` and `DISCONNECTED` show the last update time when one exists and never use live styling.
+- The existing per-symbol `QuoteStore` and reconnect path remain intact; active-view and intraday demand share the same debounced EventSource reopen.
