@@ -1,19 +1,12 @@
-"""Shared fundamentals cache with background refresh.
+"""Compatibility cache for fundamentals, without an active external provider.
 
-Yahoo Finance fundamental metrics (Forward P/E, PEG, ROE, etc.) are slow to
-fetch (~9s for 25 symbols) but change at most daily.  This module provides a
-24-hour TTL cache so indicator endpoints return instantly and fundamentals are
-merged from cache when available.
+Taiwan runtime indicators retain the in-memory merge seam so cached values can
+still be consumed by existing code, but this build does not fetch or warm
+fundamentals from Yahoo or any replacement provider.
 """
 
-import asyncio
-import logging
-
 from app.schemas.price import IndicatorSnapshotBase, SymbolIndicatorSnapshot
-from app.services.yahoo import yahoo_client
 from app.utils import TTLCache
-
-logger = logging.getLogger(__name__)
 
 # Per-symbol fundamentals cache: keyed by uppercase symbol, value is
 # dict[field, value].  24h TTL since fundamentals change at most daily.
@@ -43,105 +36,47 @@ def get_uncached_symbols(symbols: list[str]) -> list[str]:
 
 
 async def warm_fundamentals_cache(symbols: list[str]) -> None:
-    """Fetch and cache fundamentals for the given symbols (blocking).
-
-    Called during scheduled refresh to pre-warm the cache.
-    """
-    if not symbols:
-        return
-    try:
-        data = await yahoo_client.fundamentals(symbols)
-        for sym, metrics in data.items():
-            clean = {k: v for k, v in metrics.items() if v is not None}
-            if clean:
-                _fundamentals_cache.set_value(sym.upper(), clean)
-        logger.info("Warmed fundamentals cache for %d symbols", len(data))
-    except Exception:
-        logger.exception("Failed to warm fundamentals cache")
+    """Keep the compatibility entry point, but do not perform provider I/O."""
+    return
 
 
 def _schedule_background_fetch(symbols: list[str]) -> None:
-    """Fire-and-forget background fetch for uncached symbols.
-
-    Prevents duplicate fetches for the same symbols.
-    """
-    to_fetch = [s for s in symbols if s.upper() not in _pending_symbols]
-    if not to_fetch:
-        return
-
-    for s in to_fetch:
-        _pending_symbols.add(s.upper())
-
-    async def _fetch():
-        try:
-            data = await yahoo_client.fundamentals(to_fetch)
-            for sym, metrics in data.items():
-                clean = {k: v for k, v in metrics.items() if v is not None}
-                if clean:
-                    _fundamentals_cache.set_value(sym.upper(), clean)
-        except Exception:
-            logger.exception("Background fundamentals fetch failed")
-        finally:
-            for s in to_fetch:
-                _pending_symbols.discard(s.upper())
-
-    asyncio.create_task(_fetch())
+    """Retain the seam while preventing background provider calls."""
+    return
 
 
 def merge_fundamentals_from_cache(
     symbols: list[str],
     target: dict[str, IndicatorSnapshotBase],
 ) -> None:
-    """Merge cached fundamentals into snapshots, scheduling background fetch for misses.
+    """Merge only already-cached fundamentals into snapshots.
 
     For each symbol in target, if fundamentals are cached, merge them into
     ``target[symbol].values`` (in-place — the snapshots may already sit in
-    the indicator cache). Symbols without cache entries trigger a background
-    fetch so they'll be available on the next request.
+    the indicator cache). Missing symbols remain without fundamentals.
     """
     cached = get_cached_fundamentals(symbols)
-    uncached = []
 
     for sym in symbols:
         upper = sym.upper()
         fund = cached.get(upper)
         if fund and sym in target:
             target[sym].values.update(fund)
-        elif upper not in cached:
-            uncached.append(upper)
-
-    if uncached:
-        _schedule_background_fetch(uncached)
 
 
 def merge_fundamentals_into_rows(symbol: str, rows: list) -> None:
-    """Merge cached fundamentals into the last indicator row.
-
-    Schedules a background fetch if the symbol is not cached.
-    """
+    """Merge cached fundamentals into the last indicator row."""
     upper = symbol.upper()
     cached = _fundamentals_cache.get_value(upper)
     if cached and rows:
         rows[-1].values.update(cached)
-    elif cached is None:
-        _schedule_background_fetch([upper])
 
 
 def merge_fundamentals_into_batch(results: list[SymbolIndicatorSnapshot]) -> None:
-    """Merge cached fundamentals into batch indicator snapshots (in place).
-
-    Schedules a background fetch for any symbols not in cache.
-    """
+    """Merge cached fundamentals into batch indicator snapshots (in place)."""
     cached = get_cached_fundamentals([e.symbol for e in results])
-    uncached = []
-
     for entry in results:
         sym = entry.symbol.upper()
         fund = cached.get(sym)
         if fund:
             entry.values.update(fund)
-        elif sym not in cached:
-            uncached.append(sym)
-
-    if uncached:
-        _schedule_background_fetch(uncached)

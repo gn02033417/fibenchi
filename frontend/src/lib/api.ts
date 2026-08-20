@@ -12,12 +12,9 @@ import type {
   AssetPerformance,
   CalendarPhase,
   ConstituentIndicator,
-  EarningsInfo,
-  EtfHoldings,
   Group,
   GroupCreate,
   GroupUpdate,
-  HoldingIndicator,
   IndicatorSummary,
   PerformanceBreakdownPoint,
   PortfolioIndex,
@@ -102,12 +99,6 @@ export const api = {
       request<AssetDetail>(`/assets/${symbol}/detail${qs({ period })}`),
     refresh: (symbol: string, period?: string) =>
       request<SyncResult>(`/assets/${symbol}/refresh${qs({ period })}`, { method: "POST" }),
-    holdings: (symbol: string) =>
-      request<EtfHoldings>(`/assets/${symbol}/holdings`),
-    holdingsIndicators: (symbol: string) =>
-      request<HoldingIndicator[]>(`/assets/${symbol}/holdings/indicators`),
-    earnings: (symbol: string) =>
-      request<EarningsInfo>(`/assets/${symbol}/earnings`),
   },
   tags: {
     list: () => request<Tag[]>("/tags"),
@@ -203,7 +194,6 @@ export const api = {
       request<void>(`/assets/${symbol}/annotations/${id}`, { method: "DELETE" }),
   },
   searchLocal: (q: string) => request<SymbolSearchResult[]>(`/search?q=${encodeURIComponent(q)}&source=local`),
-  searchYahoo: (q: string) => request<SymbolSearchResult[]>(`/search?q=${encodeURIComponent(q)}&source=yahoo`),
   settings: {
     get: () => request<{ data: Record<string, unknown> }>("/settings"),
     update: (data: Record<string, unknown>) =>

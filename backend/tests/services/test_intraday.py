@@ -11,12 +11,12 @@ from app.domain import AssetRef
 from app.domain.phases import Session
 from app.services.intraday import (
     _classify_session,
-    fetch_and_store_intraday,
     persist_live_intraday_bars,
 )
 from app.services.intraday_aggregator import IntradayBucket
 from app.services.yahoo import yahoo_client
 from app.services.yahoo._intraday import ProviderIntradayBar
+from app.services.yahoo.legacy_intraday import fetch_and_store_intraday
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 

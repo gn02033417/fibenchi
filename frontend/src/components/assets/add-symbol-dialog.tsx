@@ -24,10 +24,10 @@ export function AddSymbolDialog({ groupId }: { groupId?: number }) {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const suggestionsRef = useRef<HTMLDivElement>(null)
 
-  const { localResults, yahooLoading, allResults } = useTwoPhaseSearch(trimmedQuery)
+  const { allResults } = useTwoPhaseSearch(trimmedQuery)
 
   const hasResults = allResults.length > 0
-  const showDropdown = showSuggestions && (hasResults || yahooLoading) && trimmedQuery
+  const showDropdown = showSuggestions && hasResults && trimmedQuery
 
   // Non-default groups that can be targeted
   const selectableGroups = groups?.filter((g) => !g.is_default)
@@ -98,8 +98,6 @@ export function AddSymbolDialog({ groupId }: { groupId?: number }) {
                 className="absolute z-50 top-full left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-md max-h-72 overflow-auto"
               >
                 <SearchResultsList
-                  localResults={localResults}
-                  yahooLoading={yahooLoading}
                   allResults={allResults}
                   onSelect={(r) => {
                     setSymbol(r.symbol)
@@ -109,7 +107,7 @@ export function AddSymbolDialog({ groupId }: { groupId?: number }) {
                 />
               </div>
             )}
-            {showSuggestions && !hasResults && !yahooLoading && trimmedQuery && (
+            {showSuggestions && !hasResults && trimmedQuery && (
               <div className="absolute z-50 top-full left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-md">
                 <div className="px-3 py-2 text-sm text-muted-foreground">No results found</div>
               </div>

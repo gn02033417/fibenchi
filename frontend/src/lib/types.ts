@@ -211,31 +211,6 @@ export interface SyncResult {
   synced: number
 }
 
-export interface Holding {
-  symbol: string
-  name: string
-  percent: number
-}
-
-export interface SectorWeighting {
-  sector: string
-  percent: number
-}
-
-export interface EtfHoldings {
-  top_holdings: Holding[]
-  sector_weightings: SectorWeighting[]
-  total_percent: number
-}
-
-export interface HoldingIndicator {
-  symbol: string
-  currency: string
-  close: number | null
-  change_pct: number | null
-  values: Record<string, number | string | null>
-}
-
 export interface PortfolioIndex {
   dates: string[]
   values: number[]
@@ -370,12 +345,6 @@ export interface IntradayPoint {
   session: "pre" | "regular" | "post"
 }
 
-export interface EarningsInfo {
-  earnings_date: string | null
-  is_estimate: boolean
-  last_reported_date: string | null
-}
-
 // --- System / data health ---
 
 export interface HoleSymbol {
@@ -430,7 +399,7 @@ export interface OrphanAsset {
   symbol: string
   name: string
   type: string
-  /** stored daily bars that would be deleted with it — re-fetchable from Yahoo */
+  /** stored daily bars that would be deleted with it — re-fetchable from the configured provider */
   price_bars: number
   latest_bar: string | null
   /** hand-written chart annotations that would be deleted with it — not re-fetchable */

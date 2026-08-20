@@ -1,27 +1,15 @@
-"""Earnings date cache with 24h TTL.
+"""Disabled earnings cache for the pure Taiwan build.
 
-Caches per-symbol earnings date lookups so the asset detail page
-doesn't hit Yahoo Finance on every load.
+The cache object remains as a compatibility seam for callers that still clear
+legacy state, but this module has no external provider and never fetches data.
 """
 
-import logging
-
-from app.services.yahoo import yahoo_client
 from app.utils import TTLCache
-
-logger = logging.getLogger(__name__)
 
 _earnings_cache: TTLCache = TTLCache(default_ttl=86400, max_size=500, thread_safe=True)
 
 
 async def get_earnings(symbol: str) -> dict[str, object] | None:
-    """Return earnings date for symbol, using cache when available."""
+    """Return an explicitly pre-seeded compatibility value, if present."""
     upper = symbol.upper()
-    cached = _earnings_cache.get_value(upper)
-    if cached is not None:
-        return cached
-
-    result = await yahoo_client.earnings(upper)
-    if result is not None:
-        _earnings_cache.set_value(upper, result)
-    return result
+    return _earnings_cache.get_value(upper)

@@ -20,7 +20,10 @@ import threading
 import time
 from typing import Any, Callable, TypeVar
 
-from yahooquery import Ticker
+try:
+    from yahooquery import Ticker
+except ImportError:  # pragma: no cover - exercised by the Taiwan runtime gate
+    Ticker = None  # type: ignore[assignment,misc]
 
 from app.services.yahoo._base import _YahooBase
 from app.services.yahoo._earnings import _EarningsMixin
@@ -112,6 +115,8 @@ class YahooClient(
             now = time.monotonic()
             expired = now - self._session_created_at > self._session_ttl
             if self._cached_ticker is None or expired:
+                if Ticker is None:
+                    raise RuntimeError("The legacy Yahoo provider requires the optional yahooquery package")
                 self._cached_ticker = Ticker(symbols)
                 self._session_created_at = now
             else:

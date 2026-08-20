@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useSettings, type AppSettings, type GroupViewMode, type YahooLinkMode } from "@/lib/settings"
+import { useSettings, type AppSettings, type GroupViewMode } from "@/lib/settings"
 import { VisibilityToggle } from "@/components/settings/visibility-toggle"
 import { IndicatorVisibilityEditor } from "@/components/settings/indicator-visibility-editor"
 import { SymbolSourcesSettings } from "@/components/settings/symbol-sources-settings"
@@ -94,21 +94,6 @@ export function SettingsPage() {
                 <SelectItem value="1y">1Y</SelectItem>
                 <SelectItem value="2y">2Y</SelectItem>
                 <SelectItem value="5y">5Y</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center justify-between">
-            <Label>Yahoo Finance Link</Label>
-            <Select
-              value={draft.yahoo_link_mode}
-              onValueChange={(v) => change({ yahoo_link_mode: v as YahooLinkMode })}
-            >
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="chart">Chart</SelectItem>
-                <SelectItem value="quote">Quote</SelectItem>
               </SelectContent>
             </Select>
           </div>

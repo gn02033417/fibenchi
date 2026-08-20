@@ -20,7 +20,6 @@ from app.routers import (
     companion,
     data,
     groups,
-    holdings,
     indicators,
     market,
     note,
@@ -105,7 +104,7 @@ async def _tracked_quote_subscriptions() -> list[ShioajiQuoteSubscription]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize the price data provider (Yahoo, IBKR, etc.)
+    # Initialize the configured Taiwan price data provider.
     init_price_provider()
 
     # Load currency lookup cache from DB
@@ -217,10 +216,9 @@ app = FastAPI(
         "**Key concepts:**\n"
         "- Assets are stocks or ETFs identified by ticker symbol. Removing an asset from its "
         "last group preserves the row for pseudo-ETF relationships.\n"
-        "- Prices are sourced from Yahoo Finance and cached in PostgreSQL. A daily cron job "
-        "refreshes all grouped assets.\n"
-        "- Ephemeral price views allow fetching prices for ungrouped symbols (e.g. ETF "
-        "holdings) without persisting data.\n"
+        "- Prices are sourced from the configured Taiwan provider and cached in PostgreSQL. "
+        "A daily cron job refreshes all grouped assets.\n"
+        "- Ephemeral price views allow fetching prices for ungrouped symbols without persisting data.\n"
         "- Groups are user-defined collections of assets. The default 'Watchlist' group "
         "cannot be deleted or renamed. Per-group batch endpoints provide sparklines and "
         "indicator snapshots in a single request, avoiding N+1 queries.\n"
@@ -232,7 +230,7 @@ app = FastAPI(
     openapi_tags=[
         {
             "name": "assets",
-            "description": "Manage tracked stocks and ETFs. Assets are identified by ticker symbol and auto-validated against Yahoo Finance.",
+            "description": "Manage tracked Taiwan stocks and ETFs from the local symbol directory.",
         },
         {
             "name": "data",
@@ -246,10 +244,6 @@ app = FastAPI(
         {
             "name": "prices",
             "description": "OHLCV price data and technical indicators (RSI, SMA 20/50, Bollinger Bands, MACD) for individual assets. Supports both persisted (grouped) and ephemeral (ungrouped) price fetching.",
-        },
-        {
-            "name": "holdings",
-            "description": "ETF holdings breakdown and per-holding technical indicator snapshots. Only available for assets with type=etf.",
         },
         {
             "name": "portfolio",
@@ -310,7 +304,6 @@ app.include_router(tags.router)
 app.include_router(tags.asset_tag_router)
 app.include_router(portfolio.router)
 app.include_router(prices.router)
-app.include_router(holdings.router)
 app.include_router(indicators.router)
 app.include_router(market.router)
 app.include_router(note.router)
