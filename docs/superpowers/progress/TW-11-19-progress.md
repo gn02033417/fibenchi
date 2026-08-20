@@ -108,3 +108,25 @@ Discoveries:
 - The approved TW-13 demand seam was present as the pure priority allocator but had no browser registration path. TW-16 completes it through optional `active_asset` / `active_group` query parameters on the existing `/api/quotes/stream`; registration and removal follow the SSE connection lifetime, with immediate bounded diff reconciliation.
 - `LIVE`, `CACHED`, and `DISCONNECTED` are rendered by the shared `QuoteFreshness` component at asset detail, group card/table, live-day, and Portfolio board tooltip price surfaces. `CACHED` and `DISCONNECTED` show the last update time when one exists and never use live styling.
 - The existing per-symbol `QuoteStore` and reconnect path remain intact; active-view and intraday demand share the same debounced EventSource reopen.
+
+## TW-17
+
+Status: COMPLETE
+Commit: 5c37087
+
+Verification:
+
+- `backend\\.venv\\Scripts\\python.exe -m pytest tests/services/test_intraday_aggregator.py tests/services/test_intraday.py tests/services/shioaji/test_stream.py tests/services/test_subscription_manager.py tests/services/test_quote_service.py tests/background_tasks/test_registry.py -q` — 58 passed.
+- `backend\\.venv\\Scripts\\python.exe -m pytest -q` — 928 passed, 756 warnings.
+- `backend\\.venv\\Scripts\\ruff.exe check app tests` — passed.
+- `corepack pnpm run test` — 56 passed.
+- `corepack pnpm run lint` — passed.
+- `corepack pnpm run build` — passed; Vite reported only the existing chunk-size warning.
+- `git diff --cached --check` — passed before commit.
+- The ticket's `docker compose exec backend ...` command was not runnable because `docker` is not installed on this machine; the same focused pytest command passed directly in the repository backend venv.
+
+Discoveries:
+
+- Official Shioaji Quote events expose `volume` as the current tick volume and `total_volume` as cumulative volume since market open; `ShioajiQuoteUpdate` retains both before the public `Quote` mapping.
+- `IntradayAggregator` owns Asia/Taipei/XTAI minute buckets, deduplicates event identities, emits a forming current bar and a completed prior bar on rollover, and persists only completed buckets through the existing `(asset_id, timestamp)` intraday key.
+- Disconnects reset cumulative-volume attribution for the next event and mark the next real bar with `gap=True`; missing minutes are never synthesized. The 60-second Yahoo intraday task is disabled at scheduler resolution and is a no-op if invoked in Shioaji mode.
